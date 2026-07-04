@@ -11,15 +11,10 @@ import {
   ImagePlus,
   Library,
   ListMusic,
-  ListPlus,
   LogOut,
   Mic2,
   Music,
   Play,
-  Repeat,
-  Shuffle,
-  SkipBack,
-  SkipForward,
   Plus,
   Radio,
   Rss,
@@ -141,11 +136,6 @@ export default function App() {
   const [podcastEpisodes, setPodcastEpisodes] = useState<PodcastEpisode[]>([]);
 
   const [currentSong, setCurrentSong] = useState<Song | null>(null);
-  const [queue, setQueue] = useState<Song[]>([]);
-  const [currentQueueIndex, setCurrentQueueIndex] = useState(0);
-  const [shuffleEnabled, setShuffleEnabled] = useState(false);
-  const [repeatMode, setRepeatMode] = useState<"off" | "all" | "one">("off");
-  const [showQueue, setShowQueue] = useState(false);
   const [loading, setLoading] = useState(false);
   const [activeView, setActiveView] = useState<View>("discover");
 
@@ -230,28 +220,6 @@ export default function App() {
     try {
       const res = await axios.get(`${API_URL}/api/music/mood/${mood}`);
       setSongs(res.data.songs);
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  async function playDailyMix(term: string) {
-    setActiveView("discover");
-    setLoading(true);
-
-    try {
-      const res = await axios.get(`${API_URL}/api/music/search`, {
-        params: { term, limit: 30 },
-      });
-
-      const mixSongs = res.data.songs || [];
-      setSongs(mixSongs);
-      setQueue(mixSongs);
-      setCurrentQueueIndex(0);
-
-      if (mixSongs.length > 0) {
-        await playSong(mixSongs[0], mixSongs, 0);
-      }
     } finally {
       setLoading(false);
     }
@@ -517,145 +485,12 @@ export default function App() {
     }
   }
 
-  function getActiveSongContext() {
-    if (activeView === "library") return favorites;
-    if (activeView === "history") return history;
-    if (activeView === "artists") return artistSongs;
-    if (activeView === "expression") return faceSongs;
-    if (activeView === "instagram") return postSongs;
-    return songs;
-  }
+  async function playSong(song: Song) {
+    setCurrentSong(song);
 
-  async function recordPlay(song: Song) {
     if (token && !song.trackId.startsWith("podcast-")) {
       await axios.post(`${API_URL}/api/history/play`, song, { headers: authHeaders });
       loadHistory();
-    }
-  }
-
-  async function playSong(song: Song, context?: Song[], forcedIndex?: number) {
-    setCurrentSong(song);
-
-    if (song.trackId.startsWith("podcast-")) {
-      setQueue([song]);
-      setCurrentQueueIndex(0);
-      return;
-    }
-
-    const activeContext = context && context.length > 0 ? context : getActiveSongContext();
-    const nextQueue = activeContext && activeContext.length > 0 ? activeContext : [song];
-
-    const detectedIndex =
-      typeof forcedIndex === "number"
-        ? forcedIndex
-        : nextQueue.findIndex((item) => item.trackId === song.trackId);
-
-    setQueue(nextQueue);
-    setCurrentQueueIndex(detectedIndex >= 0 ? detectedIndex : 0);
-
-    await recordPlay(song);
-  }
-
-  function addToQueue(song: Song) {
-    setQueue((prev) => {
-      const alreadyQueued = prev.some((item) => item.trackId === song.trackId);
-
-      if (alreadyQueued) {
-        return prev;
-      }
-
-      if (prev.length === 0 && currentSong) {
-        return [currentSong, song];
-      }
-
-      return [...prev, song];
-    });
-
-    setShowQueue(true);
-  }
-
-  function playNextSong(song: Song) {
-    setQueue((prev) => {
-      const baseQueue = prev.length > 0 ? prev : currentSong ? [currentSong] : [];
-      const currentIndex = baseQueue.findIndex((item) => item.trackId === currentSong?.trackId);
-      const insertIndex = currentIndex >= 0 ? currentIndex + 1 : 0;
-
-      const withoutDuplicate = baseQueue.filter((item) => item.trackId !== song.trackId);
-      return [
-        ...withoutDuplicate.slice(0, insertIndex),
-        song,
-        ...withoutDuplicate.slice(insertIndex),
-      ];
-    });
-
-    setShowQueue(true);
-  }
-
-  async function playNext() {
-    if (queue.length === 0) return;
-
-    if (shuffleEnabled && queue.length > 1) {
-      let randomIndex = Math.floor(Math.random() * queue.length);
-
-      if (randomIndex === currentQueueIndex) {
-        randomIndex = (randomIndex + 1) % queue.length;
-      }
-
-      await playSong(queue[randomIndex], queue, randomIndex);
-      return;
-    }
-
-    let nextIndex = currentQueueIndex + 1;
-
-    if (nextIndex >= queue.length) {
-      if (repeatMode === "all") {
-        nextIndex = 0;
-      } else {
-        return;
-      }
-    }
-
-    await playSong(queue[nextIndex], queue, nextIndex);
-  }
-
-  async function playPrevious() {
-    if (queue.length === 0) return;
-
-    let previousIndex = currentQueueIndex - 1;
-
-    if (previousIndex < 0) {
-      previousIndex = repeatMode === "all" ? queue.length - 1 : 0;
-    }
-
-    await playSong(queue[previousIndex], queue, previousIndex);
-  }
-
-  function toggleRepeatMode() {
-    setRepeatMode((current) => {
-      if (current === "off") return "all";
-      if (current === "all") return "one";
-      return "off";
-    });
-  }
-
-  async function startArtistRadio(artistName: string) {
-    setSelectedArtist(artistName);
-    setActiveView("artists");
-    setLoading(true);
-
-    try {
-      const res = await axios.get(`${API_URL}/api/artists/${encodeURIComponent(artistName)}/songs`);
-      const radioSongs = res.data.songs || [];
-
-      setArtistSongs(radioSongs);
-      setQueue(radioSongs);
-      setCurrentQueueIndex(0);
-
-      if (radioSongs.length > 0) {
-        await playSong(radioSongs[0], radioSongs, 0);
-      }
-    } finally {
-      setLoading(false);
     }
   }
 
@@ -924,8 +759,6 @@ export default function App() {
                 onMood={() => setActiveView("mood")}
               />
 
-              <DailyMixes onPick={playDailyMix} />
-
               <LiveFlow />
 
               <SongsSection
@@ -940,9 +773,6 @@ export default function App() {
                 onAddToPlaylist={addToPlaylist}
                 onToggleArtist={toggleArtist}
                 onOpenArtist={openArtist}
-                onAddToQueue={addToQueue}
-                onPlayNext={playNextSong}
-                onStartRadio={startArtistRadio}
               />
             </>
           )}
@@ -968,9 +798,6 @@ export default function App() {
               onAddToPlaylist={addToPlaylist}
               onToggleArtist={toggleArtist}
               onOpenArtist={openArtist}
-              onAddToQueue={addToQueue}
-              onPlayNext={playNextSong}
-              onStartRadio={startArtistRadio}
             />
           )}
 
@@ -992,9 +819,6 @@ export default function App() {
               onAddToPlaylist={addToPlaylist}
               onToggleArtist={toggleArtist}
               onOpenArtist={openArtist}
-              onAddToQueue={addToQueue}
-              onPlayNext={playNextSong}
-              onStartRadio={startArtistRadio}
             />
           )}
 
@@ -1047,9 +871,6 @@ export default function App() {
               onAddToPlaylist={addToPlaylist}
               onToggleArtist={toggleArtist}
               onOpenArtist={openArtist}
-              onAddToQueue={addToQueue}
-              onPlayNext={playNextSong}
-              onStartRadio={startArtistRadio}
             />
           )}
 
@@ -1067,9 +888,6 @@ export default function App() {
               onAddToPlaylist={addToPlaylist}
               onToggleArtist={toggleArtist}
               onOpenArtist={openArtist}
-              onAddToQueue={addToQueue}
-              onPlayNext={playNextSong}
-              onStartRadio={startArtistRadio}
             />
           )}
 
@@ -1130,106 +948,7 @@ export default function App() {
               <p className="truncate text-sm text-white/55">{currentSong.artistName}</p>
             </div>
 
-            <div className="flex w-full flex-col gap-3 md:w-[540px]">
-              <div className="flex items-center justify-center gap-3">
-                <button
-                  onClick={() => setShuffleEnabled((value) => !value)}
-                  className={`rounded-xl border px-3 py-2 ${
-                    shuffleEnabled
-                      ? "border-purple-400 bg-purple-500/20 text-purple-100"
-                      : "border-white/10 bg-white/10 text-white/60"
-                  }`}
-                  title="Shuffle"
-                >
-                  <Shuffle size={17} />
-                </button>
-
-                <button
-                  onClick={playPrevious}
-                  className="rounded-xl border border-white/10 bg-white/10 px-3 py-2 text-white/70 hover:bg-white/20"
-                  title="Previous"
-                >
-                  <SkipBack size={17} />
-                </button>
-
-                <button
-                  onClick={playNext}
-                  className="rounded-xl border border-white/10 bg-white/10 px-3 py-2 text-white/70 hover:bg-white/20"
-                  title="Next"
-                >
-                  <SkipForward size={17} />
-                </button>
-
-                <button
-                  onClick={toggleRepeatMode}
-                  className={`rounded-xl border px-3 py-2 ${
-                    repeatMode !== "off"
-                      ? "border-purple-400 bg-purple-500/20 text-purple-100"
-                      : "border-white/10 bg-white/10 text-white/60"
-                  }`}
-                  title="Repeat"
-                >
-                  <Repeat size={17} />
-                  {repeatMode === "one" && <span className="ml-1 text-[10px] font-black">1</span>}
-                </button>
-
-                <button
-                  onClick={() => setShowQueue((value) => !value)}
-                  className="rounded-xl border border-white/10 bg-white/10 px-3 py-2 text-white/70 hover:bg-white/20"
-                  title="Queue"
-                >
-                  <ListMusic size={17} />
-                </button>
-              </div>
-
-              <audio
-                controls
-                autoPlay
-                loop={repeatMode === "one"}
-                src={currentSong.previewUrl}
-                onEnded={() => {
-                  if (repeatMode !== "one") {
-                    playNext();
-                  }
-                }}
-                className="w-full"
-              />
-
-              {showQueue && (
-                <div className="max-h-52 overflow-y-auto rounded-2xl border border-white/10 bg-black/70 p-3">
-                  <div className="mb-2 flex items-center justify-between">
-                    <p className="text-sm font-black">Up Next</p>
-                    <p className="text-xs text-white/40">{queue.length} tracks</p>
-                  </div>
-
-                  {queue.length === 0 ? (
-                    <p className="text-sm text-white/45">Queue is empty.</p>
-                  ) : (
-                    <div className="space-y-2">
-                      {queue.map((song, index) => (
-                        <button
-                          key={`${song.trackId}-${index}`}
-                          onClick={() => playSong(song, queue, index)}
-                          className={`flex w-full items-center gap-3 rounded-xl p-2 text-left hover:bg-white/10 ${
-                            index === currentQueueIndex ? "bg-purple-500/20" : "bg-white/5"
-                          }`}
-                        >
-                          <img
-                            src={song.artworkUrl100 || ""}
-                            alt={song.trackName}
-                            className="h-10 w-10 rounded-lg object-cover"
-                          />
-                          <div className="min-w-0 flex-1">
-                            <p className="truncate text-sm font-bold">{song.trackName}</p>
-                            <p className="truncate text-xs text-white/45">{song.artistName}</p>
-                          </div>
-                        </button>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              )}
-            </div>
+            <audio controls autoPlay src={currentSong.previewUrl} className="w-full md:w-[460px]" />
           </div>
         </div>
       )}
@@ -1374,70 +1093,6 @@ function LiveFlow() {
           <p className="mt-1 text-sm text-white/50">{step.text}</p>
         </motion.div>
       ))}
-    </section>
-  );
-}
-
-
-function DailyMixes({ onPick }: { onPick: (term: string) => void }) {
-  const mixes = [
-    {
-      title: "Daily Mix 01",
-      subtitle: "Lofi, chill, focus",
-      term: "lofi chill focus",
-      gradient: "from-purple-600/40 to-cyan-500/20",
-    },
-    {
-      title: "Daily Mix 02",
-      subtitle: "Workout energy",
-      term: "workout electronic hype",
-      gradient: "from-orange-600/40 to-pink-500/20",
-    },
-    {
-      title: "Daily Mix 03",
-      subtitle: "Late night drive",
-      term: "night drive synthwave",
-      gradient: "from-blue-600/40 to-purple-500/20",
-    },
-    {
-      title: "Artist Radio",
-      subtitle: "Fresh discovery",
-      term: "trending indie electronic",
-      gradient: "from-emerald-600/40 to-cyan-500/20",
-    },
-  ];
-
-  return (
-    <section className="mt-8">
-      <div className="mb-5 flex items-center justify-between">
-        <div>
-          <h2 className="text-3xl font-black">Made For You</h2>
-          <p className="text-sm text-white/45">Daily mixes, radio, and continuous listening</p>
-        </div>
-      </div>
-
-      <div className="grid gap-4 md:grid-cols-4">
-        {mixes.map((mix, index) => (
-          <motion.button
-            key={mix.title}
-            initial={{ opacity: 0, y: 14 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: index * 0.06 }}
-            onClick={() => onPick(mix.term)}
-            className={`rounded-[1.6rem] border border-white/10 bg-gradient-to-br ${mix.gradient} p-5 text-left transition hover:-translate-y-1 hover:bg-white/10`}
-          >
-            <div className="mb-6 flex h-14 w-14 items-center justify-center rounded-2xl bg-white/15">
-              <Waves size={24} />
-            </div>
-            <h3 className="text-xl font-black">{mix.title}</h3>
-            <p className="mt-1 text-sm text-white/55">{mix.subtitle}</p>
-            <div className="mt-5 inline-flex items-center gap-2 rounded-full bg-white px-4 py-2 text-sm font-black text-black">
-              <Play size={14} fill="black" />
-              Play Mix
-            </div>
-          </motion.button>
-        ))}
-      </div>
     </section>
   );
 }
@@ -1958,9 +1613,6 @@ function SongsSection({
   onAddToPlaylist,
   onToggleArtist,
   onOpenArtist,
-  onAddToQueue,
-  onPlayNext,
-  onStartRadio,
 }: {
   title: string;
   emptyText?: string;
@@ -1974,9 +1626,6 @@ function SongsSection({
   onAddToPlaylist: (song: Song, playlistId: number) => void;
   onToggleArtist: (song: Song) => void;
   onOpenArtist: (artistName: string) => void;
-  onAddToQueue: (song: Song) => void;
-  onPlayNext: (song: Song) => void;
-  onStartRadio: (artistName: string) => void;
 }) {
   return (
     <section className="mt-10">
@@ -2039,30 +1688,6 @@ function SongsSection({
                 >
                   <UserRoundPlus size={15} />
                   {favoriteArtistNames.has(song.artistName) ? "Following" : "Artist"}
-                </button>
-
-                <button
-                  onClick={() => onAddToQueue(song)}
-                  className="flex items-center gap-2 rounded-xl border border-white/10 px-3 py-2 text-sm text-white/70 hover:bg-white/10"
-                >
-                  <ListPlus size={15} />
-                  Queue
-                </button>
-
-                <button
-                  onClick={() => onPlayNext(song)}
-                  className="flex items-center gap-2 rounded-xl border border-white/10 px-3 py-2 text-sm text-white/70 hover:bg-white/10"
-                >
-                  <SkipForward size={15} />
-                  Next
-                </button>
-
-                <button
-                  onClick={() => onStartRadio(song.artistName)}
-                  className="flex items-center gap-2 rounded-xl border border-white/10 px-3 py-2 text-sm text-white/70 hover:bg-white/10"
-                >
-                  <Radio size={15} />
-                  Radio
                 </button>
               </div>
 
