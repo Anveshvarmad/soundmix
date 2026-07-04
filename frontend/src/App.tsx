@@ -1,11 +1,13 @@
 import { FormEvent, ReactNode, useEffect, useMemo, useState } from "react";
 import axios from "axios";
 import {
+  Camera,
   Clock,
   Compass,
   Headphones,
   Heart,
   History,
+  ImagePlus,
   Home,
   Library,
   ListMusic,
@@ -17,6 +19,7 @@ import {
   Search,
   Sparkles,
   Trash2,
+  UploadCloud,
   User,
   Waves,
 } from "lucide-react";
@@ -48,7 +51,7 @@ type Playlist = {
   songs?: Song[];
 };
 
-type View = "discover" | "mood" | "library" | "history" | "playlists" | "profile";
+type View = "discover" | "mood" | "expression" | "instagram" | "library" | "history" | "playlists" | "profile";
 
 const API_URL = import.meta.env.VITE_API_URL || "http://localhost:8000";
 
@@ -64,6 +67,8 @@ const moods = [
 const navItems: { id: View; label: string; icon: any }[] = [
   { id: "discover", label: "Discover", icon: Home },
   { id: "mood", label: "Mood Mix", icon: Radio },
+  { id: "expression", label: "Face Mix", icon: Camera },
+  { id: "instagram", label: "Post Music", icon: ImagePlus },
   { id: "library", label: "Library", icon: Library },
   { id: "history", label: "History", icon: History },
   { id: "playlists", label: "Playlists", icon: ListMusic },
@@ -94,6 +99,27 @@ export default function App() {
   const [playlistName, setPlaylistName] = useState("");
   const [playlistDescription, setPlaylistDescription] = useState("");
   const [playlistMessage, setPlaylistMessage] = useState("");
+
+  const [faceFile, setFaceFile] = useState<File | null>(null);
+  const [facePreview, setFacePreview] = useState("");
+  const [faceResult, setFaceResult] = useState<{
+    emotion: string;
+    confidence: number;
+    faceDetected: boolean;
+    term: string;
+  } | null>(null);
+  const [faceSongs, setFaceSongs] = useState<Song[]>([]);
+
+  const [postFile, setPostFile] = useState<File | null>(null);
+  const [postPreview, setPostPreview] = useState("");
+  const [postCaption, setPostCaption] = useState("");
+  const [postResult, setPostResult] = useState<{
+    vibe: string;
+    reason: string;
+    term: string;
+    suggestedClipSeconds: number;
+  } | null>(null);
+  const [postSongs, setPostSongs] = useState<Song[]>([]);
 
   const authHeaders = useMemo(() => {
     return token ? { Authorization: `Bearer ${token}` } : {};
@@ -142,6 +168,101 @@ export default function App() {
     try {
       const res = await axios.get(`${API_URL}/api/music/mood/${mood}`);
       setSongs(res.data.songs);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  function handleFaceFile(file: File | null) {
+    setFaceFile(file);
+    setFaceResult(null);
+    setFaceSongs([]);
+
+    if (file) {
+      setFacePreview(URL.createObjectURL(file));
+    } else {
+      setFacePreview("");
+    }
+  }
+
+  function handlePostFile(file: File | null) {
+    setPostFile(file);
+    setPostResult(null);
+    setPostSongs([]);
+
+    if (file) {
+      setPostPreview(URL.createObjectURL(file));
+    } else {
+      setPostPreview("");
+    }
+  }
+
+  async function analyzeExpression(e: FormEvent) {
+    e.preventDefault();
+
+    if (!faceFile) {
+      alert("Please upload a face image first.");
+      return;
+    }
+
+    setLoading(true);
+
+    try {
+      const formData = new FormData();
+      formData.append("file", faceFile);
+
+      const res = await axios.post(`${API_URL}/api/emotion/analyze`, formData, {
+        headers: { "Content-Type": "multipart/form-data" },
+      });
+
+      setFaceResult({
+        emotion: res.data.emotion,
+        confidence: res.data.confidence,
+        faceDetected: res.data.faceDetected,
+        term: res.data.term,
+      });
+
+      setFaceSongs(res.data.songs);
+
+      if (res.data.songs?.length) {
+        playSong(res.data.songs[0]);
+      }
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function suggestInstagramMusic(e: FormEvent) {
+    e.preventDefault();
+
+    if (!postFile && !postCaption.trim()) {
+      alert("Upload a post image or enter a caption.");
+      return;
+    }
+
+    setLoading(true);
+
+    try {
+      const formData = new FormData();
+
+      if (postFile) {
+        formData.append("file", postFile);
+      }
+
+      formData.append("caption", postCaption);
+
+      const res = await axios.post(`${API_URL}/api/instagram/suggest`, formData, {
+        headers: { "Content-Type": "multipart/form-data" },
+      });
+
+      setPostResult({
+        vibe: res.data.vibe,
+        reason: res.data.reason,
+        term: res.data.term,
+        suggestedClipSeconds: res.data.suggestedClipSeconds,
+      });
+
+      setPostSongs(res.data.songs);
     } finally {
       setLoading(false);
     }
@@ -482,6 +603,8 @@ export default function App() {
                 {activeView === "discover" && "Discover Music"}
                 {activeView === "mood" && "Mood Mix"}
                 {activeView === "library" && "Your Library"}
+                {activeView === "expression" && "Face Expression Mix"}
+                {activeView === "instagram" && "Instagram Post Music"}
                 {activeView === "history" && "Listening History"}
                 {activeView === "playlists" && "Playlists"}
                 {activeView === "profile" && "Profile"}
@@ -632,6 +755,164 @@ export default function App() {
               onAddToPlaylist={addToPlaylist}
             />
           )}
+
+
+          {activeView === "expression" && (
+            <section>
+              <div className="mb-8 rounded-[2rem] border border-white/10 bg-gradient-to-br from-purple-700/35 to-cyan-500/10 p-8">
+                <p className="mb-2 flex items-center gap-2 text-sm text-purple-200">
+                  <Camera size={16} />
+                  Upload a selfie or face image
+                </p>
+                <h1 className="text-4xl font-black md:text-6xl">Facial Expression Music</h1>
+                <p className="mt-4 max-w-2xl text-white/60">
+                  SoundMix detects the visible expression and instantly starts a matching Audius track.
+                </p>
+              </div>
+
+              <div className="grid gap-6 lg:grid-cols-[0.85fr_1.15fr]">
+                <form onSubmit={analyzeExpression} className="card-glass rounded-[2rem] p-7">
+                  <h2 className="text-3xl font-black">Analyze Emotion</h2>
+                  <p className="mt-2 text-white/50">
+                    Upload a clear face image. Images are processed by the backend and not stored.
+                  </p>
+
+                  <label className="mt-6 flex min-h-64 cursor-pointer flex-col items-center justify-center rounded-[2rem] border border-dashed border-white/20 bg-white/5 p-6 text-center hover:bg-white/10">
+                    {facePreview ? (
+                      <img
+                        src={facePreview}
+                        alt="Face preview"
+                        className="max-h-72 rounded-3xl object-cover"
+                      />
+                    ) : (
+                      <>
+                        <UploadCloud size={42} className="mb-4 text-purple-200" />
+                        <p className="font-bold">Click to upload face image</p>
+                        <p className="mt-1 text-sm text-white/40">PNG, JPG, JPEG under 6MB</p>
+                      </>
+                    )}
+
+                    <input
+                      type="file"
+                      accept="image/*"
+                      className="hidden"
+                      onChange={(e) => handleFaceFile(e.target.files?.[0] || null)}
+                    />
+                  </label>
+
+                  <button className="mt-5 w-full rounded-2xl bg-purple-500 px-5 py-4 font-black hover:bg-purple-400">
+                    Detect Expression & Play Music
+                  </button>
+
+                  {faceResult && (
+                    <div className="mt-5 rounded-2xl border border-white/10 bg-white/10 p-5">
+                      <p className="text-sm text-white/45">Detected Emotion</p>
+                      <h3 className="mt-1 text-3xl font-black capitalize">{faceResult.emotion}</h3>
+                      <p className="mt-2 text-sm text-white/55">
+                        Confidence: {Math.round(faceResult.confidence * 100)}% · Face detected:{" "}
+                        {faceResult.faceDetected ? "Yes" : "No"}
+                      </p>
+                      <p className="mt-1 text-sm text-purple-200">Search term: {faceResult.term}</p>
+                    </div>
+                  )}
+                </form>
+
+                <SongsSection
+                  title="Expression Recommendations"
+                  emptyText="Upload an image to generate expression-based songs."
+                  loading={loading}
+                  songs={faceSongs}
+                  playlists={playlists}
+                  favoriteIds={favoriteIds}
+                  onPlay={playSong}
+                  onLike={toggleLike}
+                  onAddToPlaylist={addToPlaylist}
+                />
+              </div>
+            </section>
+          )}
+
+          {activeView === "instagram" && (
+            <section>
+              <div className="mb-8 rounded-[2rem] border border-white/10 bg-gradient-to-br from-pink-700/35 to-purple-500/10 p-8">
+                <p className="mb-2 flex items-center gap-2 text-sm text-pink-200">
+                  <ImagePlus size={16} />
+                  Upload post image + caption
+                </p>
+                <h1 className="text-4xl font-black md:text-6xl">Instagram Post Music</h1>
+                <p className="mt-4 max-w-2xl text-white/60">
+                  SoundMix detects the post vibe and suggests songs that work well for short 30-second social clips.
+                </p>
+              </div>
+
+              <div className="grid gap-6 lg:grid-cols-[0.85fr_1.15fr]">
+                <form onSubmit={suggestInstagramMusic} className="card-glass rounded-[2rem] p-7">
+                  <h2 className="text-3xl font-black">Suggest Post Music</h2>
+                  <p className="mt-2 text-white/50">
+                    Great for travel, gym, food, aesthetic, sunset, or party posts.
+                  </p>
+
+                  <label className="mt-6 flex min-h-64 cursor-pointer flex-col items-center justify-center rounded-[2rem] border border-dashed border-white/20 bg-white/5 p-6 text-center hover:bg-white/10">
+                    {postPreview ? (
+                      <img
+                        src={postPreview}
+                        alt="Post preview"
+                        className="max-h-72 rounded-3xl object-cover"
+                      />
+                    ) : (
+                      <>
+                        <UploadCloud size={42} className="mb-4 text-pink-200" />
+                        <p className="font-bold">Click to upload post image</p>
+                        <p className="mt-1 text-sm text-white/40">Optional but recommended</p>
+                      </>
+                    )}
+
+                    <input
+                      type="file"
+                      accept="image/*"
+                      className="hidden"
+                      onChange={(e) => handlePostFile(e.target.files?.[0] || null)}
+                    />
+                  </label>
+
+                  <textarea
+                    value={postCaption}
+                    onChange={(e) => setPostCaption(e.target.value)}
+                    className="mt-4 min-h-28 w-full rounded-2xl border border-white/10 bg-white/10 px-4 py-4 outline-none"
+                    placeholder="Caption / hashtags example: beach sunset with friends #travel"
+                  />
+
+                  <button className="mt-5 w-full rounded-2xl bg-pink-500 px-5 py-4 font-black hover:bg-pink-400">
+                    Suggest Instagram Music
+                  </button>
+
+                  {postResult && (
+                    <div className="mt-5 rounded-2xl border border-white/10 bg-white/10 p-5">
+                      <p className="text-sm text-white/45">Detected Post Vibe</p>
+                      <h3 className="mt-1 text-3xl font-black capitalize">{postResult.vibe}</h3>
+                      <p className="mt-2 text-sm text-white/55">{postResult.reason}</p>
+                      <p className="mt-1 text-sm text-pink-200">
+                        Suggested clip: first {postResult.suggestedClipSeconds} seconds
+                      </p>
+                    </div>
+                  )}
+                </form>
+
+                <SongsSection
+                  title="Post-Ready Music"
+                  emptyText="Upload a post image or caption to get music suggestions."
+                  loading={loading}
+                  songs={postSongs}
+                  playlists={playlists}
+                  favoriteIds={favoriteIds}
+                  onPlay={playSong}
+                  onLike={toggleLike}
+                  onAddToPlaylist={addToPlaylist}
+                />
+              </div>
+            </section>
+          )}
+
 
           {activeView === "playlists" && (
             <section className="grid gap-6 xl:grid-cols-[0.8fr_1.2fr]">
@@ -856,7 +1137,7 @@ export default function App() {
         </div>
       )}
 
-      <nav className="fixed bottom-0 left-0 right-0 z-50 grid grid-cols-6 border-t border-white/10 bg-black/90 py-2 backdrop-blur-xl lg:hidden">
+      <nav className="fixed bottom-0 left-0 right-0 z-50 grid grid-cols-8 border-t border-white/10 bg-black/90 py-2 backdrop-blur-xl lg:hidden">
         {navItems.map((item) => {
           const Icon = item.icon;
           const active = activeView === item.id;

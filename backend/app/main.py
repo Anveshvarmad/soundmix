@@ -1,9 +1,15 @@
 from collections import Counter
 from datetime import datetime
+import io
 import os
+import re
+
+import cv2
+import numpy as np
+from PIL import Image
 
 import httpx
-from fastapi import FastAPI, Query, Depends, HTTPException
+from fastapi import FastAPI, Query, Depends, HTTPException, File, UploadFile, Form
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import RedirectResponse
 from sqlalchemy.orm import Session
@@ -27,6 +33,198 @@ app.add_middleware(
 
 AUDIOUS_API_BASE = os.getenv("AUDIOUS_API_BASE", "https://api.audius.co")
 AUDIOUS_APP_NAME = os.getenv("AUDIOUS_APP_NAME", "soundmix")
+
+
+EMOTION_TO_SEARCH = {
+    "happy": "happy upbeat dance",
+    "sad": "sad acoustic piano",
+    "angry": "intense rock workout",
+    "neutral": "chill lofi",
+    "surprise": "party upbeat electronic",
+    "fear": "calm ambient relaxing",
+}
+
+POST_VIBE_TO_SEARCH = {
+    "travel": "travel sunset chill",
+    "beach": "beach summer tropical",
+    "fitness": "workout hype electronic",
+    "food": "fun lifestyle pop",
+    "party": "party dance upbeat",
+    "romantic": "romantic love acoustic",
+    "study": "focus lofi instrumental",
+    "aesthetic": "aesthetic chill electronic",
+    "calm": "calm ambient lofi",
+    "happy": "happy pop upbeat",
+}
+
+
+async def read_upload_as_cv_image(file: UploadFile) -> np.ndarray:
+    if not file.content_type or not file.content_type.startswith("image/"):
+        raise HTTPException(status_code=400, detail="Please upload a valid image file")
+
+    content = await file.read()
+
+    if len(content) > 6 * 1024 * 1024:
+        raise HTTPException(status_code=400, detail="Image must be smaller than 6MB")
+
+    try:
+        image = Image.open(io.BytesIO(content)).convert("RGB")
+        image.thumbnail((900, 900))
+        rgb = np.array(image)
+        return cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Could not read image")
+
+
+def analyze_expression_from_image(image: np.ndarray) -> dict:
+    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+
+    face_detector = cv2.CascadeClassifier(
+        cv2.data.haarcascades + "haarcascade_frontalface_default.xml"
+    )
+    smile_detector = cv2.CascadeClassifier(
+        cv2.data.haarcascades + "haarcascade_smile.xml"
+    )
+    eye_detector = cv2.CascadeClassifier(
+        cv2.data.haarcascades + "haarcascade_eye.xml"
+    )
+
+    faces = []
+    if not face_detector.empty():
+        faces = face_detector.detectMultiScale(
+            gray,
+            scaleFactor=1.1,
+            minNeighbors=5,
+            minSize=(80, 80),
+        )
+
+    face_detected = len(faces) > 0
+
+    if face_detected:
+        x, y, w, h = max(faces, key=lambda box: box[2] * box[3])
+        face_gray = gray[y:y + h, x:x + w]
+        face_bgr = image[y:y + h, x:x + w]
+    else:
+        face_gray = gray
+        face_bgr = image
+
+    hsv = cv2.cvtColor(face_bgr, cv2.COLOR_BGR2HSV)
+    brightness = float(np.mean(hsv[:, :, 2]))
+    saturation = float(np.mean(hsv[:, :, 1]))
+    contrast = float(np.std(face_gray))
+
+    edges = cv2.Canny(face_gray, 80, 160)
+    edge_density = float(np.count_nonzero(edges) / max(edges.size, 1))
+
+    smile_count = 0
+    eye_count = 0
+
+    if face_detected and not smile_detector.empty():
+        lower_face = face_gray[int(face_gray.shape[0] * 0.45):, :]
+        smiles = smile_detector.detectMultiScale(
+            lower_face,
+            scaleFactor=1.7,
+            minNeighbors=18,
+            minSize=(25, 25),
+        )
+        smile_count = len(smiles)
+
+    if face_detected and not eye_detector.empty():
+        upper_face = face_gray[:int(face_gray.shape[0] * 0.55), :]
+        eyes = eye_detector.detectMultiScale(
+            upper_face,
+            scaleFactor=1.1,
+            minNeighbors=5,
+            minSize=(20, 20),
+        )
+        eye_count = len(eyes)
+
+    if smile_count > 0:
+        emotion = "happy"
+        confidence = 0.82
+    elif brightness < 85 and saturation < 80:
+        emotion = "sad"
+        confidence = 0.68
+    elif contrast > 72 and edge_density > 0.13:
+        emotion = "angry"
+        confidence = 0.61
+    elif eye_count >= 2 and contrast > 55 and brightness > 115:
+        emotion = "surprise"
+        confidence = 0.58
+    elif brightness < 95 and contrast > 60:
+        emotion = "fear"
+        confidence = 0.55
+    else:
+        emotion = "neutral"
+        confidence = 0.60 if face_detected else 0.45
+
+    return {
+        "emotion": emotion,
+        "confidence": confidence,
+        "faceDetected": face_detected,
+        "signals": {
+            "brightness": round(brightness, 2),
+            "saturation": round(saturation, 2),
+            "contrast": round(contrast, 2),
+            "edgeDensity": round(edge_density, 4),
+            "smileCount": smile_count,
+            "eyeCount": eye_count,
+        },
+    }
+
+
+def analyze_post_vibe(image: np.ndarray | None, caption: str) -> dict:
+    clean_caption = caption.lower().strip()
+
+    keyword_groups = {
+        "travel": ["travel", "trip", "vacation", "mountain", "city", "road", "flight"],
+        "beach": ["beach", "sea", "ocean", "sunset", "summer", "pool"],
+        "fitness": ["gym", "fitness", "workout", "run", "running", "lift"],
+        "food": ["food", "coffee", "restaurant", "dinner", "lunch", "brunch"],
+        "party": ["party", "club", "dance", "nightout", "birthday"],
+        "romantic": ["love", "couple", "date", "romantic", "heart"],
+        "study": ["study", "work", "desk", "coding", "focus", "college"],
+        "aesthetic": ["aesthetic", "vibe", "fashion", "fit", "outfit"],
+    }
+
+    for vibe, words in keyword_groups.items():
+        if any(re.search(rf"\b{re.escape(word)}\b", clean_caption) for word in words):
+            return {
+                "vibe": vibe,
+                "reason": "Detected vibe from caption keywords",
+            }
+
+    if image is None:
+        return {
+            "vibe": "aesthetic",
+            "reason": "No image keywords found, using general aesthetic music",
+        }
+
+    hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
+    brightness = float(np.mean(hsv[:, :, 2]))
+    saturation = float(np.mean(hsv[:, :, 1]))
+    hue = float(np.mean(hsv[:, :, 0]))
+
+    if brightness > 145 and saturation > 95:
+        vibe = "happy"
+    elif brightness < 90 and saturation < 85:
+        vibe = "calm"
+    elif 10 <= hue <= 35 and saturation > 80:
+        vibe = "beach"
+    elif saturation > 110:
+        vibe = "party"
+    else:
+        vibe = "aesthetic"
+
+    return {
+        "vibe": vibe,
+        "reason": "Detected vibe from image color and lighting",
+        "signals": {
+            "brightness": round(brightness, 2),
+            "saturation": round(saturation, 2),
+            "hue": round(hue, 2),
+        },
+    }
 
 
 @app.on_event("startup")
@@ -638,3 +836,52 @@ def remove_song_from_playlist(
     db.commit()
 
     return {"message": "Song removed from playlist"}
+
+
+
+@app.post("/api/emotion/analyze")
+async def analyze_emotion_music(file: UploadFile = File(...)):
+    image = await read_upload_as_cv_image(file)
+    emotion_result = analyze_expression_from_image(image)
+
+    emotion = emotion_result["emotion"]
+    term = EMOTION_TO_SEARCH.get(emotion, "chill lofi")
+    songs = await fetch_audius_search(term, 24)
+
+    return {
+        "type": "facial-expression",
+        "emotion": emotion,
+        "confidence": emotion_result["confidence"],
+        "faceDetected": emotion_result["faceDetected"],
+        "term": term,
+        "analysis": emotion_result,
+        "count": len(songs),
+        "songs": songs,
+    }
+
+
+@app.post("/api/instagram/suggest")
+async def suggest_instagram_music(
+    caption: str = Form(default=""),
+    file: UploadFile | None = File(default=None),
+):
+    image = None
+
+    if file is not None and file.filename:
+        image = await read_upload_as_cv_image(file)
+
+    vibe_result = analyze_post_vibe(image, caption)
+    vibe = vibe_result["vibe"]
+    term = POST_VIBE_TO_SEARCH.get(vibe, "aesthetic chill")
+    songs = await fetch_audius_search(term, 18)
+
+    return {
+        "type": "instagram-post",
+        "vibe": vibe,
+        "term": term,
+        "reason": vibe_result.get("reason"),
+        "analysis": vibe_result,
+        "suggestedClipSeconds": 30,
+        "count": len(songs),
+        "songs": songs,
+    }
