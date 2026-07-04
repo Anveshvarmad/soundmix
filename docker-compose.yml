@@ -18,6 +18,7 @@ services:
     environment:
       DATABASE_URL: postgresql+psycopg2://soundmix:soundmix@postgres:5432/soundmix
       CORS_ORIGINS: http://localhost:5173
+      SECRET_KEY: soundmix-local-dev-secret
     ports:
       - "8000:8000"
     depends_on:
