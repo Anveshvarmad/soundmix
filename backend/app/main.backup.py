@@ -17,7 +17,7 @@ from sqlalchemy.orm import Session
 
 from app.database import Base, engine, get_db
 from app.models import User, FavoriteSong, ListeningHistory, Playlist, PlaylistSong, FavoriteArtist, FavoritePodcast
-from app.schemas import UserCreate, LoginRequest, TokenResponse, SongIn, PlaylistCreate, PlaylistUpdate, ArtistIn, PodcastIn, SmartMixRequest, SmartPlaylistRequest
+from app.schemas import UserCreate, LoginRequest, TokenResponse, SongIn, PlaylistCreate, PlaylistUpdate, ArtistIn, PodcastIn
 from app.auth import hash_password, verify_password, create_access_token, get_current_user
 
 app = FastAPI(title="SoundMix API", version="2.0.0")
@@ -451,78 +451,6 @@ async def fetch_audius_trending(limit: int = 32) -> list[dict]:
     tracks = data.get("data", [])
     return [normalize_audius_track(track) for track in tracks if track.get("id")]
 
-
-
-
-
-def build_smart_mix_plan(prompt: str) -> dict:
-    text = prompt.lower().strip()
-
-    mood_terms = {
-        "workout": ["gym", "workout", "run", "running", "lift", "fitness", "training"],
-        "focus": ["study", "coding", "work", "focus", "deep work", "productivity"],
-        "chill": ["chill", "relax", "lofi", "calm", "sleep", "peace"],
-        "party": ["party", "club", "dance", "hype", "turn up"],
-        "sad": ["sad", "rain", "rainy", "heartbreak", "cry", "emotional"],
-        "love": ["love", "romantic", "date", "couple"],
-        "travel": ["travel", "road", "trip", "beach", "sunset", "drive"],
-        "rap": ["rap", "hip hop", "trap"],
-        "electronic": ["edm", "electronic", "house", "techno"],
-        "rock": ["rock", "guitar", "metal"],
-    }
-
-    selected = []
-
-    for label, keywords in mood_terms.items():
-        if any(keyword in text for keyword in keywords):
-            selected.append(label)
-
-    if not selected:
-        selected = ["discover"]
-
-    search_map = {
-        "workout": "workout electronic hype",
-        "focus": "lofi focus instrumental",
-        "chill": "chill lofi relaxing",
-        "party": "party dance electronic",
-        "sad": "sad acoustic emotional",
-        "love": "romantic love acoustic",
-        "travel": "travel sunset chill",
-        "rap": "hip hop rap trap",
-        "electronic": "electronic house dance",
-        "rock": "rock alternative",
-        "discover": prompt or "trending music",
-    }
-
-    search_terms = [search_map[item] for item in selected]
-    search_term = " ".join(search_terms[:3])
-
-    title_base = " ".join(word.capitalize() for word in selected[:2])
-    title = f"{title_base} Mix" if title_base else "Smart Mix"
-
-    return {
-        "title": title,
-        "searchTerm": search_term,
-        "detectedSignals": selected,
-        "description": f"Generated from prompt: {prompt}",
-    }
-
-
-def make_unique_playlist_name(db: Session, user_id: int, base_name: str) -> str:
-    name = base_name.strip() or "Smart Mix"
-    existing_names = {
-        row.name
-        for row in db.query(Playlist).filter(Playlist.user_id == user_id).all()
-    }
-
-    if name not in existing_names:
-        return name
-
-    counter = 2
-    while f"{name} {counter}" in existing_names:
-        counter += 1
-
-    return f"{name} {counter}"
 
 @app.get("/health")
 def health():
@@ -1234,80 +1162,3 @@ def remove_favorite_podcast(
     db.commit()
 
     return {"message": "Podcast removed from favorites"}
-
-
-
-@app.post("/api/ai-mix/generate")
-async def generate_ai_mix(payload: SmartMixRequest):
-    prompt = payload.prompt.strip()
-
-    if not prompt:
-        raise HTTPException(status_code=400, detail="Prompt is required")
-
-    plan = build_smart_mix_plan(prompt)
-    songs = await fetch_audius_search(plan["searchTerm"], payload.limit or 24)
-
-    return {
-        "prompt": prompt,
-        "title": plan["title"],
-        "description": plan["description"],
-        "searchTerm": plan["searchTerm"],
-        "detectedSignals": plan["detectedSignals"],
-        "count": len(songs),
-        "songs": songs,
-    }
-
-
-@app.post("/api/ai-mix/create-playlist")
-async def create_ai_mix_playlist(
-    payload: SmartPlaylistRequest,
-    current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
-):
-    prompt = payload.prompt.strip()
-
-    if not prompt:
-        raise HTTPException(status_code=400, detail="Prompt is required")
-
-    plan = build_smart_mix_plan(prompt)
-    songs = await fetch_audius_search(plan["searchTerm"], payload.limit or 20)
-
-    playlist_name = make_unique_playlist_name(
-        db,
-        current_user.id,
-        payload.name or plan["title"],
-    )
-
-    playlist = Playlist(
-        user_id=current_user.id,
-        name=playlist_name,
-        description=payload.description or plan["description"],
-    )
-
-    db.add(playlist)
-    db.commit()
-    db.refresh(playlist)
-
-    for song in songs:
-        playlist_song = PlaylistSong(
-            playlist_id=playlist.id,
-            track_id=str(song["trackId"]),
-            track_name=song["trackName"],
-            artist_name=song["artistName"],
-            collection_name=song.get("collectionName"),
-            artwork_url=song.get("artworkUrl100"),
-            preview_url=song.get("previewUrl"),
-            genre=song.get("primaryGenreName"),
-        )
-        db.add(playlist_song)
-
-    db.commit()
-    db.refresh(playlist)
-
-    return {
-        "message": "Smart playlist created",
-        "prompt": prompt,
-        "searchTerm": plan["searchTerm"],
-        "detectedSignals": plan["detectedSignals"],
-        "playlist": playlist_to_dict(playlist, include_songs=True),
-    }

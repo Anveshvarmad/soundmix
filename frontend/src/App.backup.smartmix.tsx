@@ -173,10 +173,6 @@ export default function App() {
   const [postResult, setPostResult] = useState<any>(null);
   const [postSongs, setPostSongs] = useState<Song[]>([]);
 
-  const [smartPrompt, setSmartPrompt] = useState("create a late night coding playlist with chill focus music");
-  const [smartResult, setSmartResult] = useState<any>(null);
-  const [smartMessage, setSmartMessage] = useState("");
-
   const authHeaders = useMemo(() => {
     return token ? { Authorization: `Bearer ${token}` } : {};
   }, [token]);
@@ -202,72 +198,6 @@ export default function App() {
 
   const visibleSongs =
     activeView === "library" ? favorites : activeView === "history" ? history : songs;
-
-  async function generateSmartMix(e?: FormEvent) {
-    if (e) {
-      e.preventDefault();
-    }
-
-    if (!smartPrompt.trim()) {
-      alert("Enter a playlist idea first.");
-      return;
-    }
-
-    setActiveView("discover");
-    setLoading(true);
-    setSmartMessage("");
-
-    try {
-      const res = await axios.post(`${API_URL}/api/ai-mix/generate`, {
-        prompt: smartPrompt,
-        limit: 28,
-      });
-
-      setSmartResult(res.data);
-      setSongs(res.data.songs || []);
-
-      if (res.data.songs?.length) {
-        setQueue(res.data.songs);
-        setCurrentQueueIndex(0);
-        await playSong(res.data.songs[0], res.data.songs, 0);
-      }
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  async function createSmartPlaylist() {
-    if (!token) {
-      setActiveView("profile");
-      return;
-    }
-
-    if (!smartPrompt.trim()) {
-      alert("Enter a playlist idea first.");
-      return;
-    }
-
-    setSmartMessage("Creating playlist...");
-
-    try {
-      const res = await axios.post(
-        `${API_URL}/api/ai-mix/create-playlist`,
-        {
-          prompt: smartPrompt,
-          name: smartResult?.title || "Smart Mix",
-          description: smartResult?.description || `Generated from: ${smartPrompt}`,
-          limit: 20,
-        },
-        { headers: authHeaders }
-      );
-
-      setSmartMessage(`Created playlist: ${res.data.playlist.name}`);
-      await loadPlaylists();
-      setSelectedPlaylist(res.data.playlist);
-    } catch (err: any) {
-      setSmartMessage(err?.response?.data?.detail || "Could not create playlist.");
-    }
-  }
 
   async function fetchDiscover() {
     setActiveView("discover");
@@ -996,16 +926,6 @@ export default function App() {
 
               <DailyMixes onPick={playDailyMix} />
 
-              <SmartMixBuilder
-                prompt={smartPrompt}
-                result={smartResult}
-                message={smartMessage}
-                loading={loading}
-                onPrompt={setSmartPrompt}
-                onGenerate={generateSmartMix}
-                onCreatePlaylist={createSmartPlaylist}
-              />
-
               <LiveFlow />
 
               <SongsSection
@@ -1458,120 +1378,6 @@ function LiveFlow() {
   );
 }
 
-
-
-function SmartMixBuilder({
-  prompt,
-  result,
-  message,
-  loading,
-  onPrompt,
-  onGenerate,
-  onCreatePlaylist,
-}: {
-  prompt: string;
-  result: any;
-  message: string;
-  loading: boolean;
-  onPrompt: (value: string) => void;
-  onGenerate: (e?: FormEvent) => void;
-  onCreatePlaylist: () => void;
-}) {
-  const examples = [
-    "create a gym playlist for evening workouts",
-    "make a beach sunset travel mix",
-    "sad acoustic rainy night songs",
-    "party dance music for friends",
-    "focus music for coding and studying",
-  ];
-
-  return (
-    <section className="mt-8 rounded-[2rem] border border-white/10 bg-gradient-to-br from-white/10 via-purple-500/10 to-cyan-400/10 p-7">
-      <div className="grid gap-6 lg:grid-cols-[0.9fr_1.1fr]">
-        <div>
-          <div className="mb-4 inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/10 px-4 py-2 text-sm text-purple-100">
-            <Sparkles size={16} />
-            Smart Playlist Generator
-          </div>
-
-          <h2 className="text-4xl font-black">Tell SoundMix what you want to hear.</h2>
-
-          <p className="mt-3 text-white/55">
-            Type a vibe, moment, activity, or emotion. SoundMix creates a playable mix and can save it as a playlist.
-          </p>
-
-          <form onSubmit={onGenerate} className="mt-6">
-            <textarea
-              value={prompt}
-              onChange={(e) => onPrompt(e.target.value)}
-              className="min-h-28 w-full rounded-2xl border border-white/10 bg-black/30 px-4 py-4 outline-none placeholder:text-white/35"
-              placeholder="Example: create a late night coding playlist with chill focus music"
-            />
-
-            <div className="mt-4 flex flex-wrap gap-3">
-              <button
-                disabled={loading}
-                className="rounded-2xl bg-white px-6 py-4 font-black text-black transition hover:scale-[1.02] disabled:opacity-60"
-              >
-                {loading ? "Generating..." : "Generate Mix"}
-              </button>
-
-              <button
-                type="button"
-                onClick={onCreatePlaylist}
-                className="rounded-2xl border border-white/10 bg-white/10 px-6 py-4 font-black text-white transition hover:bg-white/20"
-              >
-                Save as Playlist
-              </button>
-            </div>
-          </form>
-
-          {message && (
-            <p className="mt-4 rounded-2xl border border-white/10 bg-white/10 px-4 py-3 text-sm text-purple-100">
-              {message}
-            </p>
-          )}
-        </div>
-
-        <div className="rounded-[1.8rem] border border-white/10 bg-black/25 p-5">
-          <h3 className="text-xl font-black">Prompt ideas</h3>
-
-          <div className="mt-4 flex flex-wrap gap-2">
-            {examples.map((example) => (
-              <button
-                key={example}
-                onClick={() => onPrompt(example)}
-                className="rounded-full border border-white/10 bg-white/10 px-4 py-2 text-sm text-white/70 hover:bg-purple-500/30 hover:text-white"
-              >
-                {example}
-              </button>
-            ))}
-          </div>
-
-          {result ? (
-            <div className="mt-6 rounded-2xl border border-purple-400/20 bg-purple-500/10 p-5">
-              <p className="text-sm text-white/45">Generated Mix</p>
-              <h3 className="mt-1 text-3xl font-black">{result.title}</h3>
-              <p className="mt-2 text-sm text-white/55">
-                Search term: <span className="text-purple-200">{result.searchTerm}</span>
-              </p>
-              <p className="mt-2 text-sm text-white/55">
-                Detected signals: {result.detectedSignals?.join(", ")}
-              </p>
-              <p className="mt-2 text-sm text-white/55">
-                {result.count} tracks found
-              </p>
-            </div>
-          ) : (
-            <div className="mt-6 rounded-2xl border border-white/10 bg-white/5 p-5 text-white/45">
-              Your generated mix summary will appear here.
-            </div>
-          )}
-        </div>
-      </div>
-    </section>
-  );
-}
 
 function DailyMixes({ onPick }: { onPick: (term: string) => void }) {
   const mixes = [

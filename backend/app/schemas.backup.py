@@ -60,15 +60,3 @@ class PodcastIn(BaseModel):
     genre: Optional[str] = None
     collectionViewUrl: Optional[str] = None
     trackCount: Optional[int] = None
-
-
-class SmartMixRequest(BaseModel):
-    prompt: str
-    limit: Optional[int] = 24
-
-
-class SmartPlaylistRequest(BaseModel):
-    prompt: str
-    name: Optional[str] = None
-    description: Optional[str] = None
-    limit: Optional[int] = 20
