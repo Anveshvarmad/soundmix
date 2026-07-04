@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { FormEvent, ReactNode, useEffect, useMemo, useState } from "react";
 import axios from "axios";
 import {
   Clock,
@@ -8,12 +8,15 @@ import {
   History,
   Home,
   Library,
+  ListMusic,
   LogOut,
   Music,
   Play,
+  Plus,
   Radio,
   Search,
   Sparkles,
+  Trash2,
   User,
   Waves,
 } from "lucide-react";
@@ -36,7 +39,16 @@ type UserType = {
   email: string;
 };
 
-type View = "discover" | "mood" | "library" | "history" | "profile";
+type Playlist = {
+  id: number;
+  name: string;
+  description?: string;
+  songCount: number;
+  createdAt?: string;
+  songs?: Song[];
+};
+
+type View = "discover" | "mood" | "library" | "history" | "playlists" | "profile";
 
 const API_URL = import.meta.env.VITE_API_URL || "http://localhost:8000";
 
@@ -54,6 +66,7 @@ const navItems: { id: View; label: string; icon: any }[] = [
   { id: "mood", label: "Mood Mix", icon: Radio },
   { id: "library", label: "Library", icon: Library },
   { id: "history", label: "History", icon: History },
+  { id: "playlists", label: "Playlists", icon: ListMusic },
   { id: "profile", label: "Profile", icon: User },
 ];
 
@@ -62,6 +75,9 @@ export default function App() {
   const [songs, setSongs] = useState<Song[]>([]);
   const [favorites, setFavorites] = useState<Song[]>([]);
   const [history, setHistory] = useState<Song[]>([]);
+  const [playlists, setPlaylists] = useState<Playlist[]>([]);
+  const [selectedPlaylist, setSelectedPlaylist] = useState<Playlist | null>(null);
+
   const [currentSong, setCurrentSong] = useState<Song | null>(null);
   const [loading, setLoading] = useState(false);
   const [activeView, setActiveView] = useState<View>("discover");
@@ -74,6 +90,10 @@ export default function App() {
   const [authEmail, setAuthEmail] = useState("");
   const [authPassword, setAuthPassword] = useState("");
   const [authError, setAuthError] = useState("");
+
+  const [playlistName, setPlaylistName] = useState("");
+  const [playlistDescription, setPlaylistDescription] = useState("");
+  const [playlistMessage, setPlaylistMessage] = useState("");
 
   const authHeaders = useMemo(() => {
     return token ? { Authorization: `Bearer ${token}` } : {};
@@ -141,7 +161,7 @@ export default function App() {
     }
   }
 
-  async function handleAuthSubmit(e: React.FormEvent) {
+  async function handleAuthSubmit(e: FormEvent) {
     e.preventDefault();
     setAuthError("");
 
@@ -175,6 +195,8 @@ export default function App() {
     setUser(null);
     setFavorites([]);
     setHistory([]);
+    setPlaylists([]);
+    setSelectedPlaylist(null);
   }
 
   async function loadFavorites() {
@@ -195,6 +217,89 @@ export default function App() {
     });
 
     setHistory(res.data.songs);
+  }
+
+  async function loadPlaylists() {
+    if (!token) return;
+
+    const res = await axios.get(`${API_URL}/api/playlists`, {
+      headers: authHeaders,
+    });
+
+    setPlaylists(res.data.playlists);
+  }
+
+  async function openPlaylist(playlistId: number) {
+    const res = await axios.get(`${API_URL}/api/playlists/${playlistId}`, {
+      headers: authHeaders,
+    });
+
+    setSelectedPlaylist(res.data);
+  }
+
+  async function createPlaylist(e: FormEvent) {
+    e.preventDefault();
+
+    if (!token) {
+      setActiveView("profile");
+      return;
+    }
+
+    setPlaylistMessage("");
+
+    try {
+      const res = await axios.post(
+        `${API_URL}/api/playlists`,
+        {
+          name: playlistName,
+          description: playlistDescription,
+        },
+        { headers: authHeaders }
+      );
+
+      setPlaylistName("");
+      setPlaylistDescription("");
+      setPlaylistMessage("Playlist created successfully.");
+      await loadPlaylists();
+      setSelectedPlaylist(res.data);
+    } catch (err: any) {
+      setPlaylistMessage(err?.response?.data?.detail || "Could not create playlist.");
+    }
+  }
+
+  async function deletePlaylist(playlistId: number) {
+    await axios.delete(`${API_URL}/api/playlists/${playlistId}`, {
+      headers: authHeaders,
+    });
+
+    setSelectedPlaylist(null);
+    await loadPlaylists();
+  }
+
+  async function addToPlaylist(song: Song, playlistId: number) {
+    if (!token) {
+      setActiveView("profile");
+      return;
+    }
+
+    await axios.post(`${API_URL}/api/playlists/${playlistId}/songs`, song, {
+      headers: authHeaders,
+    });
+
+    await loadPlaylists();
+
+    if (selectedPlaylist?.id === playlistId) {
+      await openPlaylist(playlistId);
+    }
+  }
+
+  async function removeFromPlaylist(playlistId: number, trackId: number) {
+    await axios.delete(`${API_URL}/api/playlists/${playlistId}/songs/${trackId}`, {
+      headers: authHeaders,
+    });
+
+    await loadPlaylists();
+    await openPlaylist(playlistId);
   }
 
   async function getRecommendations() {
@@ -258,6 +363,11 @@ export default function App() {
     loadHistory();
   }
 
+  function openPlaylistsPage() {
+    setActiveView("playlists");
+    loadPlaylists();
+  }
+
   function changeView(view: View) {
     if (view === "library") {
       openLibrary();
@@ -266,6 +376,11 @@ export default function App() {
 
     if (view === "history") {
       openHistory();
+      return;
+    }
+
+    if (view === "playlists") {
+      openPlaylistsPage();
       return;
     }
 
@@ -284,6 +399,7 @@ export default function App() {
     if (token) {
       loadFavorites();
       loadHistory();
+      loadPlaylists();
     }
   }, [token]);
 
@@ -367,6 +483,7 @@ export default function App() {
                 {activeView === "mood" && "Mood Mix"}
                 {activeView === "library" && "Your Library"}
                 {activeView === "history" && "Listening History"}
+                {activeView === "playlists" && "Playlists"}
                 {activeView === "profile" && "Profile"}
               </h2>
             </div>
@@ -409,7 +526,7 @@ export default function App() {
                   </h1>
 
                   <p className="mt-5 max-w-2xl text-lg text-white/70">
-                    Search tracks, play previews, like songs, track listening history, and generate personalized recommendations.
+                    Search tracks, play previews, like songs, create playlists, track history, and generate personalized recommendations.
                   </p>
 
                   <div className="mt-8 flex flex-wrap gap-3">
@@ -439,6 +556,7 @@ export default function App() {
                   <div className="space-y-4">
                     <StatCard label="Liked Songs" value={favorites.length} icon={<Heart size={20} />} />
                     <StatCard label="Played Tracks" value={history.length} icon={<Clock size={20} />} />
+                    <StatCard label="Playlists" value={playlists.length} icon={<ListMusic size={20} />} />
                     <StatCard label="Mode" value={user ? "Personal" : "Guest"} icon={<User size={20} />} />
                   </div>
                 </motion.div>
@@ -448,9 +566,11 @@ export default function App() {
                 title="Recommended Tracks"
                 loading={loading}
                 songs={visibleSongs}
+                playlists={playlists}
                 favoriteIds={favoriteIds}
                 onPlay={playSong}
                 onLike={toggleLike}
+                onAddToPlaylist={addToPlaylist}
               />
             </>
           )}
@@ -491,9 +611,11 @@ export default function App() {
               emptyText="You have not liked any songs yet."
               loading={loading}
               songs={visibleSongs}
+              playlists={playlists}
               favoriteIds={favoriteIds}
               onPlay={playSong}
               onLike={toggleLike}
+              onAddToPlaylist={addToPlaylist}
             />
           )}
 
@@ -503,10 +625,162 @@ export default function App() {
               emptyText="Play a song to build your listening history."
               loading={loading}
               songs={visibleSongs}
+              playlists={playlists}
               favoriteIds={favoriteIds}
               onPlay={playSong}
               onLike={toggleLike}
+              onAddToPlaylist={addToPlaylist}
             />
+          )}
+
+          {activeView === "playlists" && (
+            <section className="grid gap-6 xl:grid-cols-[0.8fr_1.2fr]">
+              <div className="space-y-6">
+                <div className="card-glass rounded-[2rem] p-7">
+                  <h2 className="text-3xl font-black">Create Playlist</h2>
+                  <p className="mt-2 text-white/50">
+                    Build your own mixes and add songs from Discover, Library, or History.
+                  </p>
+
+                  {!user ? (
+                    <button
+                      onClick={() => setActiveView("profile")}
+                      className="mt-6 w-full rounded-2xl bg-purple-500 px-5 py-4 font-black"
+                    >
+                      Login to create playlists
+                    </button>
+                  ) : (
+                    <form onSubmit={createPlaylist} className="mt-6 space-y-3">
+                      <input
+                        value={playlistName}
+                        onChange={(e) => setPlaylistName(e.target.value)}
+                        className="w-full rounded-2xl border border-white/10 bg-white/10 px-4 py-4 outline-none"
+                        placeholder="Playlist name"
+                        required
+                      />
+                      <textarea
+                        value={playlistDescription}
+                        onChange={(e) => setPlaylistDescription(e.target.value)}
+                        className="min-h-24 w-full rounded-2xl border border-white/10 bg-white/10 px-4 py-4 outline-none"
+                        placeholder="Description optional"
+                      />
+                      {playlistMessage && (
+                        <p className="text-sm text-purple-200">{playlistMessage}</p>
+                      )}
+                      <button className="flex w-full items-center justify-center gap-2 rounded-2xl bg-purple-500 px-5 py-4 font-black hover:bg-purple-400">
+                        <Plus size={18} />
+                        Create Playlist
+                      </button>
+                    </form>
+                  )}
+                </div>
+
+                <div className="card-glass rounded-[2rem] p-7">
+                  <h2 className="mb-5 text-2xl font-black">Your Playlists</h2>
+
+                  {playlists.length === 0 ? (
+                    <p className="text-white/50">No playlists created yet.</p>
+                  ) : (
+                    <div className="space-y-3">
+                      {playlists.map((playlist) => (
+                        <button
+                          key={playlist.id}
+                          onClick={() => openPlaylist(playlist.id)}
+                          className={`w-full rounded-2xl border px-5 py-4 text-left transition ${
+                            selectedPlaylist?.id === playlist.id
+                              ? "border-purple-400 bg-purple-500/20"
+                              : "border-white/10 bg-white/5 hover:bg-white/10"
+                          }`}
+                        >
+                          <div className="flex items-center justify-between gap-3">
+                            <div>
+                              <h3 className="font-black">{playlist.name}</h3>
+                              <p className="text-sm text-white/45">
+                                {playlist.songCount} songs
+                              </p>
+                            </div>
+                            <ListMusic className="text-purple-200" size={22} />
+                          </div>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              <div className="card-glass rounded-[2rem] p-7">
+                {selectedPlaylist ? (
+                  <>
+                    <div className="mb-6 flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
+                      <div>
+                        <h2 className="text-4xl font-black">{selectedPlaylist.name}</h2>
+                        <p className="mt-2 text-white/50">
+                          {selectedPlaylist.description || "No description"}
+                        </p>
+                        <p className="mt-2 text-sm text-purple-200">
+                          {selectedPlaylist.songs?.length || 0} songs in this playlist
+                        </p>
+                      </div>
+
+                      <button
+                        onClick={() => deletePlaylist(selectedPlaylist.id)}
+                        className="flex items-center gap-2 rounded-2xl border border-red-400/30 bg-red-500/10 px-4 py-3 text-sm font-bold text-red-200 hover:bg-red-500/20"
+                      >
+                        <Trash2 size={16} />
+                        Delete
+                      </button>
+                    </div>
+
+                    {!selectedPlaylist.songs || selectedPlaylist.songs.length === 0 ? (
+                      <div className="rounded-3xl border border-white/10 bg-white/5 p-10 text-center text-white/50">
+                        This playlist is empty. Add songs from Discover using the playlist dropdown.
+                      </div>
+                    ) : (
+                      <div className="space-y-3">
+                        {selectedPlaylist.songs.map((song) => (
+                          <div
+                            key={song.trackId}
+                            className="flex items-center gap-4 rounded-2xl border border-white/10 bg-white/5 p-3"
+                          >
+                            <img
+                              src={song.artworkUrl100 || ""}
+                              alt={song.trackName}
+                              className="h-16 w-16 rounded-xl object-cover"
+                            />
+                            <div className="min-w-0 flex-1">
+                              <h3 className="truncate font-black">{song.trackName}</h3>
+                              <p className="truncate text-sm text-white/50">{song.artistName}</p>
+                            </div>
+                            <button
+                              onClick={() => playSong(song)}
+                              className="rounded-xl bg-purple-500 p-3"
+                            >
+                              <Play size={18} fill="white" />
+                            </button>
+                            <button
+                              onClick={() => removeFromPlaylist(selectedPlaylist.id, song.trackId)}
+                              className="rounded-xl border border-white/10 bg-white/10 p-3 hover:bg-red-500/20"
+                            >
+                              <Trash2 size={18} />
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </>
+                ) : (
+                  <div className="flex min-h-[420px] flex-col items-center justify-center text-center">
+                    <div className="mb-5 rounded-3xl bg-white/10 p-6">
+                      <ListMusic size={42} />
+                    </div>
+                    <h2 className="text-3xl font-black">Select a playlist</h2>
+                    <p className="mt-2 max-w-md text-white/50">
+                      Choose a playlist from the left side to view songs and manage your mix.
+                    </p>
+                  </div>
+                )}
+              </div>
+            </section>
           )}
 
           {activeView === "profile" && (
@@ -523,6 +797,7 @@ export default function App() {
                     <div className="mt-8 grid gap-4">
                       <StatCard label="Liked Songs" value={favorites.length} icon={<Heart size={20} />} />
                       <StatCard label="Listening History" value={history.length} icon={<History size={20} />} />
+                      <StatCard label="Playlists" value={playlists.length} icon={<ListMusic size={20} />} />
                     </div>
 
                     <button
@@ -553,8 +828,8 @@ export default function App() {
                 <div className="mt-6 grid gap-4">
                   <Feature text="Save liked songs to your personal library." />
                   <Feature text="Store listening history in PostgreSQL." />
+                  <Feature text="Create playlists and organize songs." />
                   <Feature text="Generate recommendations from your music activity." />
-                  <Feature text="Keep the same project flow as the original SoundMix idea with modern architecture." />
                 </div>
               </div>
             </section>
@@ -581,7 +856,7 @@ export default function App() {
         </div>
       )}
 
-      <nav className="fixed bottom-0 left-0 right-0 z-50 grid grid-cols-5 border-t border-white/10 bg-black/90 py-2 backdrop-blur-xl lg:hidden">
+      <nav className="fixed bottom-0 left-0 right-0 z-50 grid grid-cols-6 border-t border-white/10 bg-black/90 py-2 backdrop-blur-xl lg:hidden">
         {navItems.map((item) => {
           const Icon = item.icon;
           const active = activeView === item.id;
@@ -590,11 +865,11 @@ export default function App() {
             <button
               key={item.id}
               onClick={() => changeView(item.id)}
-              className={`flex flex-col items-center gap-1 text-xs ${
+              className={`flex flex-col items-center gap-1 text-[10px] ${
                 active ? "text-purple-300" : "text-white/45"
               }`}
             >
-              <Icon size={20} />
+              <Icon size={19} />
               {item.label}
             </button>
           );
@@ -611,7 +886,7 @@ function StatCard({
 }: {
   label: string;
   value: number | string;
-  icon: React.ReactNode;
+  icon: ReactNode;
 }) {
   return (
     <div className="flex items-center justify-between rounded-2xl border border-white/10 bg-white/5 p-4">
@@ -629,17 +904,21 @@ function SongsSection({
   emptyText = "No songs found.",
   loading,
   songs,
+  playlists,
   favoriteIds,
   onPlay,
   onLike,
+  onAddToPlaylist,
 }: {
   title: string;
   emptyText?: string;
   loading: boolean;
   songs: Song[];
+  playlists: Playlist[];
   favoriteIds: Set<number>;
   onPlay: (song: Song) => void;
   onLike: (song: Song) => void;
+  onAddToPlaylist: (song: Song, playlistId: number) => void;
 }) {
   return (
     <section className="mt-10">
@@ -687,7 +966,7 @@ function SongsSection({
                 </p>
               </div>
 
-              <div className="mt-4 flex items-center justify-between">
+              <div className="mt-4 flex items-center justify-between gap-2">
                 <button
                   onClick={() => onLike(song)}
                   className={`flex items-center gap-2 rounded-xl border px-4 py-2 text-sm transition ${
@@ -710,6 +989,25 @@ function SongsSection({
                   </span>
                 )}
               </div>
+
+              <select
+                defaultValue=""
+                onChange={(e) => {
+                  const playlistId = Number(e.target.value);
+                  if (playlistId) {
+                    onAddToPlaylist(song, playlistId);
+                    e.target.value = "";
+                  }
+                }}
+                className="mt-3 w-full rounded-xl border border-white/10 bg-black/50 px-3 py-2 text-sm text-white outline-none"
+              >
+                <option value="">Add to playlist</option>
+                {playlists.map((playlist) => (
+                  <option key={playlist.id} value={playlist.id}>
+                    {playlist.name}
+                  </option>
+                ))}
+              </select>
             </motion.div>
           ))}
         </div>
@@ -739,7 +1037,7 @@ function AuthForm({
   setAuthName: (value: string) => void;
   setAuthEmail: (value: string) => void;
   setAuthPassword: (value: string) => void;
-  handleAuthSubmit: (e: React.FormEvent) => void;
+  handleAuthSubmit: (e: FormEvent) => void;
 }) {
   return (
     <form onSubmit={handleAuthSubmit}>
@@ -747,7 +1045,7 @@ function AuthForm({
         {authMode === "login" ? "Welcome Back" : "Create Account"}
       </h2>
       <p className="mt-2 text-white/50">
-        Login to save likes, history, and recommendations.
+        Login to save likes, history, playlists, and recommendations.
       </p>
 
       <div className="mt-7 space-y-3">

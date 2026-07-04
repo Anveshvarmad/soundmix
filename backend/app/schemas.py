@@ -33,3 +33,13 @@ class SongIn(BaseModel):
     artworkUrl100: Optional[str] = None
     previewUrl: Optional[str] = None
     primaryGenreName: Optional[str] = None
+
+
+class PlaylistCreate(BaseModel):
+    name: str
+    description: Optional[str] = None
+
+
+class PlaylistUpdate(BaseModel):
+    name: Optional[str] = None
+    description: Optional[str] = None

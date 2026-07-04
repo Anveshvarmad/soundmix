@@ -8,8 +8,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 
 from app.database import Base, engine, get_db
-from app.models import User, FavoriteSong, ListeningHistory
-from app.schemas import UserCreate, LoginRequest, TokenResponse, SongIn
+from app.models import User, FavoriteSong, ListeningHistory, Playlist, PlaylistSong
+from app.schemas import UserCreate, LoginRequest, TokenResponse, SongIn, PlaylistCreate, PlaylistUpdate
 from app.auth import hash_password, verify_password, create_access_token, get_current_user
 
 app = FastAPI(title="SoundMix API", version="1.0.0")
@@ -33,11 +33,7 @@ def startup():
 
 
 def user_to_dict(user: User) -> dict:
-    return {
-        "id": user.id,
-        "name": user.name,
-        "email": user.email,
-    }
+    return {"id": user.id, "name": user.name, "email": user.email}
 
 
 def normalize_song(item: dict) -> dict:
@@ -78,6 +74,34 @@ def history_to_dict(song: ListeningHistory) -> dict:
         "playCount": song.play_count,
         "lastPlayed": song.last_played,
     }
+
+
+def playlist_song_to_dict(song: PlaylistSong) -> dict:
+    return {
+        "trackId": song.track_id,
+        "trackName": song.track_name,
+        "artistName": song.artist_name,
+        "collectionName": song.collection_name,
+        "artworkUrl100": song.artwork_url,
+        "previewUrl": song.preview_url,
+        "primaryGenreName": song.genre,
+        "addedAt": song.added_at,
+    }
+
+
+def playlist_to_dict(playlist: Playlist, include_songs: bool = False) -> dict:
+    data = {
+        "id": playlist.id,
+        "name": playlist.name,
+        "description": playlist.description,
+        "songCount": len(playlist.songs),
+        "createdAt": playlist.created_at,
+    }
+
+    if include_songs:
+        data["songs"] = [playlist_song_to_dict(song) for song in playlist.songs]
+
+    return data
 
 
 async def fetch_itunes(term: str, limit: int = 30) -> list[dict]:
@@ -375,3 +399,204 @@ async def recommendations(
         "message": "Recommendations generated from your listening history.",
         "songs": filtered[:24],
     }
+
+
+@app.get("/api/playlists")
+def get_playlists(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    playlists = (
+        db.query(Playlist)
+        .filter(Playlist.user_id == current_user.id)
+        .order_by(Playlist.created_at.desc())
+        .all()
+    )
+
+    return {
+        "count": len(playlists),
+        "playlists": [playlist_to_dict(playlist) for playlist in playlists],
+    }
+
+
+@app.post("/api/playlists")
+def create_playlist(
+    payload: PlaylistCreate,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    name = payload.name.strip()
+
+    if not name:
+        raise HTTPException(status_code=400, detail="Playlist name is required")
+
+    existing = (
+        db.query(Playlist)
+        .filter(Playlist.user_id == current_user.id, Playlist.name == name)
+        .first()
+    )
+
+    if existing:
+        raise HTTPException(status_code=400, detail="Playlist already exists")
+
+    playlist = Playlist(
+        user_id=current_user.id,
+        name=name,
+        description=payload.description,
+    )
+
+    db.add(playlist)
+    db.commit()
+    db.refresh(playlist)
+
+    return playlist_to_dict(playlist, include_songs=True)
+
+
+@app.get("/api/playlists/{playlist_id}")
+def get_playlist(
+    playlist_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    playlist = (
+        db.query(Playlist)
+        .filter(Playlist.id == playlist_id, Playlist.user_id == current_user.id)
+        .first()
+    )
+
+    if not playlist:
+        raise HTTPException(status_code=404, detail="Playlist not found")
+
+    return playlist_to_dict(playlist, include_songs=True)
+
+
+@app.patch("/api/playlists/{playlist_id}")
+def update_playlist(
+    playlist_id: int,
+    payload: PlaylistUpdate,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    playlist = (
+        db.query(Playlist)
+        .filter(Playlist.id == playlist_id, Playlist.user_id == current_user.id)
+        .first()
+    )
+
+    if not playlist:
+        raise HTTPException(status_code=404, detail="Playlist not found")
+
+    if payload.name is not None:
+        name = payload.name.strip()
+        if not name:
+            raise HTTPException(status_code=400, detail="Playlist name is required")
+        playlist.name = name
+
+    if payload.description is not None:
+        playlist.description = payload.description
+
+    db.commit()
+    db.refresh(playlist)
+
+    return playlist_to_dict(playlist, include_songs=True)
+
+
+@app.delete("/api/playlists/{playlist_id}")
+def delete_playlist(
+    playlist_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    playlist = (
+        db.query(Playlist)
+        .filter(Playlist.id == playlist_id, Playlist.user_id == current_user.id)
+        .first()
+    )
+
+    if not playlist:
+        raise HTTPException(status_code=404, detail="Playlist not found")
+
+    db.delete(playlist)
+    db.commit()
+
+    return {"message": "Playlist deleted"}
+
+
+@app.post("/api/playlists/{playlist_id}/songs")
+def add_song_to_playlist(
+    playlist_id: int,
+    song: SongIn,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    playlist = (
+        db.query(Playlist)
+        .filter(Playlist.id == playlist_id, Playlist.user_id == current_user.id)
+        .first()
+    )
+
+    if not playlist:
+        raise HTTPException(status_code=404, detail="Playlist not found")
+
+    existing = (
+        db.query(PlaylistSong)
+        .filter(
+            PlaylistSong.playlist_id == playlist_id,
+            PlaylistSong.track_id == song.trackId,
+        )
+        .first()
+    )
+
+    if existing:
+        return playlist_song_to_dict(existing)
+
+    playlist_song = PlaylistSong(
+        playlist_id=playlist_id,
+        track_id=song.trackId,
+        track_name=song.trackName,
+        artist_name=song.artistName,
+        collection_name=song.collectionName,
+        artwork_url=song.artworkUrl100,
+        preview_url=song.previewUrl,
+        genre=song.primaryGenreName,
+    )
+
+    db.add(playlist_song)
+    db.commit()
+    db.refresh(playlist_song)
+
+    return playlist_song_to_dict(playlist_song)
+
+
+@app.delete("/api/playlists/{playlist_id}/songs/{track_id}")
+def remove_song_from_playlist(
+    playlist_id: int,
+    track_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    playlist = (
+        db.query(Playlist)
+        .filter(Playlist.id == playlist_id, Playlist.user_id == current_user.id)
+        .first()
+    )
+
+    if not playlist:
+        raise HTTPException(status_code=404, detail="Playlist not found")
+
+    playlist_song = (
+        db.query(PlaylistSong)
+        .filter(
+            PlaylistSong.playlist_id == playlist_id,
+            PlaylistSong.track_id == track_id,
+        )
+        .first()
+    )
+
+    if not playlist_song:
+        raise HTTPException(status_code=404, detail="Song not found in playlist")
+
+    db.delete(playlist_song)
+    db.commit()
+
+    return {"message": "Song removed from playlist"}
