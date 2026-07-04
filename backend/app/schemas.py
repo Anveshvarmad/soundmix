@@ -26,7 +26,7 @@ class TokenResponse(BaseModel):
 
 
 class SongIn(BaseModel):
-    trackId: int
+    trackId: str
     trackName: str
     artistName: str
     collectionName: Optional[str] = None

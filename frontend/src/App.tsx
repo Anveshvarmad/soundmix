@@ -23,7 +23,7 @@ import {
 import { motion } from "framer-motion";
 
 type Song = {
-  trackId: number;
+  trackId: string;
   trackName: string;
   artistName: string;
   collectionName?: string;
@@ -293,7 +293,7 @@ export default function App() {
     }
   }
 
-  async function removeFromPlaylist(playlistId: number, trackId: number) {
+  async function removeFromPlaylist(playlistId: number, trackId: string) {
     await axios.delete(`${API_URL}/api/playlists/${playlistId}/songs/${trackId}`, {
       headers: authHeaders,
     });
@@ -915,7 +915,7 @@ function SongsSection({
   loading: boolean;
   songs: Song[];
   playlists: Playlist[];
-  favoriteIds: Set<number>;
+  favoriteIds: Set<string>;
   onPlay: (song: Song) => void;
   onLike: (song: Song) => void;
   onAddToPlaylist: (song: Song, playlistId: number) => void;

@@ -24,12 +24,12 @@ class FavoriteSong(Base):
     id = Column(Integer, primary_key=True, index=True)
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
 
-    track_id = Column(Integer, nullable=False)
+    track_id = Column(String(80), nullable=False)
     track_name = Column(String(255), nullable=False)
     artist_name = Column(String(255), nullable=False)
     collection_name = Column(String(255), nullable=True)
     artwork_url = Column(String(500), nullable=True)
-    preview_url = Column(String(500), nullable=True)
+    preview_url = Column(String(700), nullable=True)
     genre = Column(String(120), nullable=True)
 
     created_at = Column(DateTime, default=datetime.utcnow)
@@ -47,12 +47,12 @@ class ListeningHistory(Base):
     id = Column(Integer, primary_key=True, index=True)
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
 
-    track_id = Column(Integer, nullable=False)
+    track_id = Column(String(80), nullable=False)
     track_name = Column(String(255), nullable=False)
     artist_name = Column(String(255), nullable=False)
     collection_name = Column(String(255), nullable=True)
     artwork_url = Column(String(500), nullable=True)
-    preview_url = Column(String(500), nullable=True)
+    preview_url = Column(String(700), nullable=True)
     genre = Column(String(120), nullable=True)
 
     play_count = Column(Integer, default=1)
@@ -88,12 +88,12 @@ class PlaylistSong(Base):
     id = Column(Integer, primary_key=True, index=True)
     playlist_id = Column(Integer, ForeignKey("playlists.id"), nullable=False)
 
-    track_id = Column(Integer, nullable=False)
+    track_id = Column(String(80), nullable=False)
     track_name = Column(String(255), nullable=False)
     artist_name = Column(String(255), nullable=False)
     collection_name = Column(String(255), nullable=True)
     artwork_url = Column(String(500), nullable=True)
-    preview_url = Column(String(500), nullable=True)
+    preview_url = Column(String(700), nullable=True)
     genre = Column(String(120), nullable=True)
 
     added_at = Column(DateTime, default=datetime.utcnow)

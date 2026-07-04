@@ -5,6 +5,7 @@ import os
 import httpx
 from fastapi import FastAPI, Query, Depends, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import RedirectResponse
 from sqlalchemy.orm import Session
 
 from app.database import Base, engine, get_db
@@ -12,7 +13,7 @@ from app.models import User, FavoriteSong, ListeningHistory, Playlist, PlaylistS
 from app.schemas import UserCreate, LoginRequest, TokenResponse, SongIn, PlaylistCreate, PlaylistUpdate
 from app.auth import hash_password, verify_password, create_access_token, get_current_user
 
-app = FastAPI(title="SoundMix API", version="1.0.0")
+app = FastAPI(title="SoundMix API", version="2.0.0")
 
 cors_origins = os.getenv("CORS_ORIGINS", "http://localhost:5173").split(",")
 
@@ -24,7 +25,8 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-ITUNES_SEARCH_URL = "https://itunes.apple.com/search"
+AUDIOUS_API_BASE = os.getenv("AUDIOUS_API_BASE", "https://api.audius.co")
+AUDIOUS_APP_NAME = os.getenv("AUDIOUS_APP_NAME", "soundmix")
 
 
 @app.on_event("startup")
@@ -36,16 +38,39 @@ def user_to_dict(user: User) -> dict:
     return {"id": user.id, "name": user.name, "email": user.email}
 
 
-def normalize_song(item: dict) -> dict:
+def get_artwork(track: dict) -> str:
+    artwork = track.get("artwork") or {}
+    return (
+        artwork.get("1000x1000")
+        or artwork.get("480x480")
+        or artwork.get("150x150")
+        or ""
+    )
+
+
+def get_artist_name(track: dict) -> str:
+    user = track.get("user") or {}
+    return user.get("name") or user.get("handle") or "Unknown Artist"
+
+
+def stream_url(track_id: str) -> str:
+    return f"{AUDIOUS_API_BASE}/v1/tracks/{track_id}/stream?app_name={AUDIOUS_APP_NAME}"
+
+
+def normalize_audius_track(track: dict) -> dict:
+    track_id = str(track.get("id"))
+
     return {
-        "trackId": item.get("trackId"),
-        "trackName": item.get("trackName"),
-        "artistName": item.get("artistName"),
-        "collectionName": item.get("collectionName"),
-        "artworkUrl100": item.get("artworkUrl100", "").replace("100x100bb", "600x600bb"),
-        "previewUrl": item.get("previewUrl"),
-        "primaryGenreName": item.get("primaryGenreName"),
-        "releaseDate": item.get("releaseDate"),
+        "trackId": track_id,
+        "trackName": track.get("title") or "Untitled Track",
+        "artistName": get_artist_name(track),
+        "collectionName": track.get("album") or track.get("playlist_name") or "Audius",
+        "artworkUrl100": get_artwork(track),
+        "previewUrl": stream_url(track_id),
+        "primaryGenreName": track.get("genre") or track.get("mood") or "Music",
+        "releaseDate": track.get("release_date"),
+        "duration": track.get("duration"),
+        "source": "Audius",
     }
 
 
@@ -104,30 +129,47 @@ def playlist_to_dict(playlist: Playlist, include_songs: bool = False) -> dict:
     return data
 
 
-async def fetch_itunes(term: str, limit: int = 30) -> list[dict]:
-    async with httpx.AsyncClient(timeout=20) as client:
+async def fetch_audius_search(term: str, limit: int = 30) -> list[dict]:
+    async with httpx.AsyncClient(timeout=25, follow_redirects=True) as client:
         response = await client.get(
-            ITUNES_SEARCH_URL,
+            f"{AUDIOUS_API_BASE}/v1/tracks/search",
             params={
-                "term": term,
-                "media": "music",
-                "entity": "song",
+                "query": term,
                 "limit": limit,
+                "app_name": AUDIOUS_APP_NAME,
             },
         )
         response.raise_for_status()
         data = response.json()
 
-    return [
-        normalize_song(item)
-        for item in data.get("results", [])
-        if item.get("previewUrl") and item.get("trackId")
-    ]
+    tracks = data.get("data", [])
+    return [normalize_audius_track(track) for track in tracks if track.get("id")]
+
+
+async def fetch_audius_trending(limit: int = 32) -> list[dict]:
+    async with httpx.AsyncClient(timeout=25, follow_redirects=True) as client:
+        response = await client.get(
+            f"{AUDIOUS_API_BASE}/v1/tracks/trending",
+            params={
+                "limit": limit,
+                "app_name": AUDIOUS_APP_NAME,
+            },
+        )
+        response.raise_for_status()
+        data = response.json()
+
+    tracks = data.get("data", [])
+    return [normalize_audius_track(track) for track in tracks if track.get("id")]
 
 
 @app.get("/health")
 def health():
-    return {"status": "ok", "service": "soundmix-api"}
+    return {"status": "ok", "service": "soundmix-api", "musicProvider": "Audius"}
+
+
+@app.get("/api/music/stream/{track_id}")
+def stream_track(track_id: str):
+    return RedirectResponse(stream_url(track_id))
 
 
 @app.post("/api/auth/register", response_model=TokenResponse)
@@ -160,7 +202,6 @@ def register(payload: UserCreate, db: Session = Depends(get_db)):
 @app.post("/api/auth/login", response_model=TokenResponse)
 def login(payload: LoginRequest, db: Session = Depends(get_db)):
     email = payload.email.lower().strip()
-
     user = db.query(User).filter(User.email == email).first()
 
     if not user or not verify_password(payload.password, user.hashed_password):
@@ -182,45 +223,42 @@ def me(current_user: User = Depends(get_current_user)):
 
 @app.get("/api/music/search")
 async def search_music(
-    term: str = Query(default="weeknd", min_length=1),
+    term: str = Query(default="lofi", min_length=1),
     limit: int = Query(default=24, ge=1, le=50),
 ):
-    songs = await fetch_itunes(term, limit)
-    return {"term": term, "count": len(songs), "songs": songs}
+    songs = await fetch_audius_search(term, limit)
+    return {"term": term, "count": len(songs), "songs": songs, "provider": "Audius"}
 
 
 @app.get("/api/music/discover")
 async def discover_music():
-    terms = ["pop hits", "hip hop", "lofi", "edm", "indie"]
-    songs = []
+    try:
+        songs = await fetch_audius_trending(32)
+    except Exception:
+        songs = await fetch_audius_search("trending music", 32)
 
-    for term in terms:
-        songs.extend(await fetch_itunes(term, 8))
-
-    unique = {}
-    for song in songs:
-        unique[song["trackId"]] = song
-
-    final_songs = list(unique.values())[:32]
-
-    return {"count": len(final_songs), "songs": final_songs}
+    return {"count": len(songs), "songs": songs, "provider": "Audius"}
 
 
 @app.get("/api/music/mood/{mood}")
 async def mood_music(mood: str):
     mood_map = {
-        "happy": "happy pop",
+        "happy": "happy upbeat",
         "sad": "sad acoustic",
-        "chill": "lofi chill",
-        "focus": "piano focus",
-        "workout": "workout edm",
-        "love": "romantic songs",
+        "chill": "chill lofi",
+        "focus": "focus instrumental",
+        "workout": "workout electronic",
+        "love": "romantic",
+        "angry": "rock intense",
+        "neutral": "chill",
+        "surprise": "party upbeat",
+        "fear": "calm ambient",
     }
 
     term = mood_map.get(mood.lower(), mood)
-    songs = await fetch_itunes(term, 30)
+    songs = await fetch_audius_search(term, 30)
 
-    return {"mood": mood, "term": term, "count": len(songs), "songs": songs}
+    return {"mood": mood, "term": term, "count": len(songs), "songs": songs, "provider": "Audius"}
 
 
 @app.get("/api/library/likes")
@@ -276,7 +314,7 @@ def like_song(
 
 @app.delete("/api/library/likes/{track_id}")
 def unlike_song(
-    track_id: int,
+    track_id: str,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -374,10 +412,10 @@ async def recommendations(
     )
 
     if not history:
-        songs = await fetch_itunes("top hits", 30)
+        songs = await fetch_audius_trending(30)
         return {
             "source": "default",
-            "message": "No listening history yet. Showing popular discovery tracks.",
+            "message": "No listening history yet. Showing trending Audius tracks.",
             "songs": songs,
         }
 
@@ -387,8 +425,8 @@ async def recommendations(
     top_genre = Counter(genres).most_common(1)[0][0] if genres else ""
     top_artist = Counter(artists).most_common(1)[0][0] if artists else ""
 
-    search_term = f"{top_genre} {top_artist}".strip() or "top hits"
-    songs = await fetch_itunes(search_term, 35)
+    search_term = f"{top_genre} {top_artist}".strip() or "trending"
+    songs = await fetch_audius_search(search_term, 35)
 
     played_ids = {item.track_id for item in history}
     filtered = [song for song in songs if song["trackId"] not in played_ids]
@@ -571,7 +609,7 @@ def add_song_to_playlist(
 @app.delete("/api/playlists/{playlist_id}/songs/{track_id}")
 def remove_song_from_playlist(
     playlist_id: int,
-    track_id: int,
+    track_id: str,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
