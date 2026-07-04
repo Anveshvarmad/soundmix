@@ -109,7 +109,6 @@ type PodcastEpisode = {
 
 type View =
   | "discover"
-  | "search"
   | "mood"
   | "expression"
   | "instagram"
@@ -153,8 +152,6 @@ export default function App() {
   const [history, setHistory] = useState<Song[]>([]);
   const [playlists, setPlaylists] = useState<Playlist[]>([]);
   const [selectedPlaylist, setSelectedPlaylist] = useState<Playlist | null>(null);
-  const [searchResults, setSearchResults] = useState<any>(null);
-  const [searchTab, setSearchTab] = useState<"songs" | "artists" | "podcasts" | "playlists">("songs");
   const [sharedPlaylist, setSharedPlaylist] = useState<Playlist | null>(null);
   const [sharedProfile, setSharedProfile] = useState<PublicProfile | null>(null);
   const [shareMessage, setShareMessage] = useState("");
@@ -359,19 +356,13 @@ export default function App() {
 
   async function searchSongs() {
     if (!query.trim()) return;
-
-    setActiveView("search");
-    setSearchTab("songs");
+    setActiveView("discover");
     setLoading(true);
-
     try {
-      const res = await axios.get(`${API_URL}/api/search/all`, {
-        params: { term: query },
+      const res = await axios.get(`${API_URL}/api/music/search`, {
+        params: { term: query, limit: 30 },
       });
-
-      setSearchResults(res.data);
-      setSongs(res.data.songs || []);
-      setPodcasts(res.data.podcasts || []);
+      setSongs(res.data.songs);
     } finally {
       setLoading(false);
     }
@@ -1121,31 +1112,6 @@ export default function App() {
             </>
           )}
 
-          {activeView === "search" && (
-            <SearchHubPage
-              loading={loading}
-              query={query}
-              results={searchResults}
-              tab={searchTab}
-              setTab={setSearchTab}
-              playlists={playlists}
-              favoriteIds={favoriteIds}
-              favoriteArtistNames={favoriteArtistNames}
-              favoritePodcastIds={favoritePodcastIds}
-              onPlay={playSong}
-              onLike={toggleLike}
-              onAddToPlaylist={addToPlaylist}
-              onToggleArtist={toggleArtist}
-              onOpenArtist={openArtist}
-              onAddToQueue={addToQueue}
-              onPlayNext={playNextSong}
-              onStartRadio={startArtistRadio}
-              onOpenPodcast={openPodcast}
-              onTogglePodcast={togglePodcast}
-              onOpenPlaylist={(playlistId: number) => loadSharedPlaylist(String(playlistId))}
-            />
-          )}
-
           {activeView === "mood" && (
             <MoodPage moods={moods} moodSearch={moodSearch} />
           )}
@@ -1481,7 +1447,6 @@ export default function App() {
 function titleForView(view: View) {
   const titles: Record<View, string> = {
     discover: "Discover Music",
-    search: "Search",
     mood: "Mood Mix",
     expression: "Face Expression Mix",
     instagram: "Instagram Post Music",
@@ -2125,246 +2090,6 @@ function PodcastsPage({
   );
 }
 
-
-
-
-
-function SearchHubPage({
-  loading,
-  query,
-  results,
-  tab,
-  setTab,
-  playlists,
-  favoriteIds,
-  favoriteArtistNames,
-  favoritePodcastIds,
-  onPlay,
-  onLike,
-  onAddToPlaylist,
-  onToggleArtist,
-  onOpenArtist,
-  onAddToQueue,
-  onPlayNext,
-  onStartRadio,
-  onOpenPodcast,
-  onTogglePodcast,
-  onOpenPlaylist,
-}: any) {
-  const counts = results?.counts || {
-    songs: 0,
-    artists: 0,
-    podcasts: 0,
-    playlists: 0,
-  };
-
-  const tabs = [
-    { id: "songs", label: "Songs", count: counts.songs, icon: <Music size={17} /> },
-    { id: "artists", label: "Artists", count: counts.artists, icon: <Mic2 size={17} /> },
-    { id: "podcasts", label: "Podcasts", count: counts.podcasts, icon: <Rss size={17} /> },
-    { id: "playlists", label: "Playlists", count: counts.playlists, icon: <ListMusic size={17} /> },
-  ];
-
-  return (
-    <section>
-      <div className="rounded-[2rem] border border-white/10 bg-gradient-to-br from-purple-700/35 via-cyan-500/10 to-pink-500/10 p-8">
-        <p className="mb-2 flex items-center gap-2 text-sm text-purple-200">
-          <Search size={16} />
-          Unified SoundMix search
-        </p>
-
-        <h1 className="text-4xl font-black md:text-6xl">
-          Results for “{query}”
-        </h1>
-
-        <p className="mt-4 max-w-2xl text-white/60">
-          Search across full tracks, artists, podcasts, and public playlists from one place.
-        </p>
-
-        <div className="mt-7 flex flex-wrap gap-3">
-          {tabs.map((item: any) => (
-            <button
-              key={item.id}
-              onClick={() => setTab(item.id)}
-              className={`flex items-center gap-2 rounded-2xl border px-5 py-3 font-bold transition ${
-                tab === item.id
-                  ? "border-purple-400 bg-purple-500/25 text-purple-100"
-                  : "border-white/10 bg-white/10 text-white/60 hover:bg-white/20"
-              }`}
-            >
-              {item.icon}
-              {item.label}
-              <span className="rounded-full bg-white/10 px-2 py-0.5 text-xs">
-                {item.count}
-              </span>
-            </button>
-          ))}
-        </div>
-      </div>
-
-      {loading && (
-        <div className="mt-8 rounded-[2rem] border border-white/10 bg-white/5 p-12 text-center text-white/60">
-          Searching SoundMix...
-        </div>
-      )}
-
-      {!loading && tab === "songs" && (
-        <SongsSection
-          title="Song Results"
-          emptyText="No songs found."
-          loading={false}
-          songs={results?.songs || []}
-          playlists={playlists}
-          favoriteIds={favoriteIds}
-          favoriteArtistNames={favoriteArtistNames}
-          onPlay={onPlay}
-          onLike={onLike}
-          onAddToPlaylist={onAddToPlaylist}
-          onToggleArtist={onToggleArtist}
-          onOpenArtist={onOpenArtist}
-          onAddToQueue={onAddToQueue}
-          onPlayNext={onPlayNext}
-          onStartRadio={onStartRadio}
-        />
-      )}
-
-      {!loading && tab === "artists" && (
-        <section className="mt-10">
-          <h2 className="mb-5 text-3xl font-black">Artist Results</h2>
-
-          {!results?.artists?.length ? (
-            <div className="rounded-[2rem] border border-white/10 bg-white/5 p-12 text-center text-white/60">
-              No artists found.
-            </div>
-          ) : (
-            <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-4">
-              {results.artists.map((artist: Artist) => (
-                <motion.button
-                  key={artist.artistName}
-                  whileHover={{ y: -6 }}
-                  onClick={() => onOpenArtist(artist.artistName)}
-                  className="rounded-[2rem] border border-white/10 bg-white/5 p-5 text-left hover:bg-white/10"
-                >
-                  <img
-                    src={artist.artworkUrl100 || ""}
-                    alt={artist.artistName}
-                    className="h-48 w-full rounded-3xl object-cover"
-                  />
-
-                  <h3 className="mt-4 text-2xl font-black">{artist.artistName}</h3>
-                  <p className="mt-1 text-sm text-white/45">
-                    {artist.primaryGenreName || "Artist"}
-                  </p>
-
-                  <div className="mt-4 inline-flex items-center gap-2 rounded-full bg-purple-500/20 px-4 py-2 text-sm text-purple-100">
-                    <Radio size={15} />
-                    Open radio
-                  </div>
-                </motion.button>
-              ))}
-            </div>
-          )}
-        </section>
-      )}
-
-      {!loading && tab === "podcasts" && (
-        <section className="mt-10">
-          <h2 className="mb-5 text-3xl font-black">Podcast Results</h2>
-
-          {!results?.podcasts?.length ? (
-            <div className="rounded-[2rem] border border-white/10 bg-white/5 p-12 text-center text-white/60">
-              No podcasts found.
-            </div>
-          ) : (
-            <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-4">
-              {results.podcasts.map((podcast: Podcast) => (
-                <motion.div
-                  key={podcast.podcastId}
-                  whileHover={{ y: -6 }}
-                  className="rounded-[2rem] border border-white/10 bg-white/5 p-5 hover:bg-white/10"
-                >
-                  <img
-                    src={podcast.artworkUrl100 || ""}
-                    alt={podcast.title}
-                    className="h-48 w-full rounded-3xl object-cover"
-                  />
-
-                  <h3 className="mt-4 line-clamp-2 text-xl font-black">{podcast.title}</h3>
-                  <p className="mt-1 truncate text-sm text-white/45">{podcast.publisher}</p>
-                  <p className="mt-2 truncate text-xs text-purple-200">{podcast.genre}</p>
-
-                  <div className="mt-4 flex gap-2">
-                    <button
-                      onClick={() => onOpenPodcast(podcast)}
-                      className="flex-1 rounded-xl bg-purple-500 px-4 py-3 text-sm font-black"
-                    >
-                      Episodes
-                    </button>
-
-                    <button
-                      onClick={() => onTogglePodcast(podcast)}
-                      className={`rounded-xl border px-4 py-3 text-sm font-black ${
-                        favoritePodcastIds.has(podcast.podcastId)
-                          ? "border-pink-400/40 bg-pink-500/20 text-pink-200"
-                          : "border-white/10 bg-white/10"
-                      }`}
-                    >
-                      <Heart
-                        size={16}
-                        fill={favoritePodcastIds.has(podcast.podcastId) ? "currentColor" : "none"}
-                      />
-                    </button>
-                  </div>
-                </motion.div>
-              ))}
-            </div>
-          )}
-        </section>
-      )}
-
-      {!loading && tab === "playlists" && (
-        <section className="mt-10">
-          <h2 className="mb-5 text-3xl font-black">Public Playlist Results</h2>
-
-          {!results?.playlists?.length ? (
-            <div className="rounded-[2rem] border border-white/10 bg-white/5 p-12 text-center text-white/60">
-              No playlists found.
-            </div>
-          ) : (
-            <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-4">
-              {results.playlists.map((playlist: Playlist) => (
-                <motion.button
-                  key={playlist.id}
-                  whileHover={{ y: -6 }}
-                  onClick={() => onOpenPlaylist(playlist.id)}
-                  className="rounded-[2rem] border border-white/10 bg-white/5 p-6 text-left hover:bg-white/10"
-                >
-                  <div className="mb-5 flex h-16 w-16 items-center justify-center rounded-2xl bg-purple-500/20 text-purple-100">
-                    <ListMusic size={28} />
-                  </div>
-
-                  <h3 className="text-2xl font-black">{playlist.name}</h3>
-
-                  <p className="mt-2 line-clamp-2 text-sm text-white/50">
-                    {playlist.description || "SoundMix playlist"}
-                  </p>
-
-                  <p className="mt-4 text-sm text-purple-200">
-                    By {playlist.ownerName || "SoundMix User"}
-                  </p>
-
-                  <p className="mt-1 text-xs text-white/40">
-                    {playlist.songCount} songs
-                  </p>
-                </motion.button>
-              ))}
-            </div>
-          )}
-        </section>
-      )}
-    </section>
-  );
-}
 
 
 function SharedPlaylistPage({
