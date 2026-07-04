@@ -12,3 +12,4 @@ python-multipart==0.0.20
 Pillow==11.0.0
 numpy==2.2.1
 opencv-python-headless==4.10.0.84
+feedparser==6.0.11

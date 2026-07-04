@@ -8,6 +8,7 @@ import cv2
 import numpy as np
 from PIL import Image
 
+import feedparser
 import httpx
 from fastapi import FastAPI, Query, Depends, HTTPException, File, UploadFile, Form
 from fastapi.middleware.cors import CORSMiddleware
@@ -15,8 +16,8 @@ from fastapi.responses import RedirectResponse
 from sqlalchemy.orm import Session
 
 from app.database import Base, engine, get_db
-from app.models import User, FavoriteSong, ListeningHistory, Playlist, PlaylistSong
-from app.schemas import UserCreate, LoginRequest, TokenResponse, SongIn, PlaylistCreate, PlaylistUpdate
+from app.models import User, FavoriteSong, ListeningHistory, Playlist, PlaylistSong, FavoriteArtist, FavoritePodcast
+from app.schemas import UserCreate, LoginRequest, TokenResponse, SongIn, PlaylistCreate, PlaylistUpdate, ArtistIn, PodcastIn
 from app.auth import hash_password, verify_password, create_access_token, get_current_user
 
 app = FastAPI(title="SoundMix API", version="2.0.0")
@@ -33,6 +34,7 @@ app.add_middleware(
 
 AUDIOUS_API_BASE = os.getenv("AUDIOUS_API_BASE", "https://api.audius.co")
 AUDIOUS_APP_NAME = os.getenv("AUDIOUS_APP_NAME", "soundmix")
+ITUNES_SEARCH_URL = "https://itunes.apple.com/search"
 
 
 EMOTION_TO_SEARCH = {
@@ -326,6 +328,96 @@ def playlist_to_dict(playlist: Playlist, include_songs: bool = False) -> dict:
 
     return data
 
+
+
+
+
+def artist_to_dict(artist: FavoriteArtist) -> dict:
+    return {
+        "artistName": artist.artist_name,
+        "artworkUrl100": artist.artwork_url,
+        "primaryGenreName": artist.genre,
+        "source": artist.source,
+        "createdAt": artist.created_at,
+    }
+
+
+def podcast_to_dict(podcast: FavoritePodcast) -> dict:
+    return {
+        "podcastId": podcast.podcast_id,
+        "title": podcast.title,
+        "publisher": podcast.publisher,
+        "artworkUrl100": podcast.artwork_url,
+        "feedUrl": podcast.feed_url,
+        "genre": podcast.genre,
+        "collectionViewUrl": podcast.collection_view_url,
+        "trackCount": podcast.track_count,
+        "createdAt": podcast.created_at,
+    }
+
+
+def normalize_podcast(item: dict) -> dict:
+    genres = item.get("genres") or []
+
+    return {
+        "podcastId": str(item.get("collectionId") or item.get("trackId") or item.get("collectionName")),
+        "title": item.get("collectionName") or item.get("trackName") or "Untitled Podcast",
+        "publisher": item.get("artistName") or "Unknown Publisher",
+        "artworkUrl100": item.get("artworkUrl600") or item.get("artworkUrl100") or "",
+        "feedUrl": item.get("feedUrl"),
+        "genre": ", ".join(genres) if genres else item.get("primaryGenreName") or "Podcast",
+        "collectionViewUrl": item.get("collectionViewUrl"),
+        "trackCount": item.get("trackCount"),
+    }
+
+
+async def fetch_podcasts(term: str, limit: int = 24) -> list[dict]:
+    async with httpx.AsyncClient(timeout=25, follow_redirects=True) as client:
+        response = await client.get(
+            ITUNES_SEARCH_URL,
+            params={
+                "term": term,
+                "media": "podcast",
+                "entity": "podcast",
+                "limit": limit,
+            },
+        )
+        response.raise_for_status()
+        data = response.json()
+
+    return [normalize_podcast(item) for item in data.get("results", [])]
+
+
+async def fetch_podcast_episodes_from_feed(feed_url: str, limit: int = 12) -> list[dict]:
+    async with httpx.AsyncClient(timeout=25, follow_redirects=True) as client:
+        response = await client.get(feed_url)
+        response.raise_for_status()
+
+    parsed = feedparser.parse(response.content)
+    episodes = []
+
+    for entry in parsed.entries[:limit]:
+        audio_url = None
+
+        for enclosure in entry.get("enclosures", []):
+            href = enclosure.get("href")
+            mime_type = enclosure.get("type", "")
+            if href and ("audio" in mime_type or href.endswith((".mp3", ".m4a", ".wav", ".ogg"))):
+                audio_url = href
+                break
+
+        if not audio_url:
+            continue
+
+        episodes.append({
+            "episodeId": entry.get("id") or entry.get("guid") or entry.get("link") or entry.get("title"),
+            "title": entry.get("title") or "Podcast Episode",
+            "published": entry.get("published") or entry.get("updated"),
+            "summary": entry.get("summary", "")[:280],
+            "audioUrl": audio_url,
+        })
+
+    return episodes
 
 async def fetch_audius_search(term: str, limit: int = 30) -> list[dict]:
     async with httpx.AsyncClient(timeout=25, follow_redirects=True) as client:
@@ -885,3 +977,188 @@ async def suggest_instagram_music(
         "count": len(songs),
         "songs": songs,
     }
+
+
+
+@app.get("/api/artists/favorites")
+def get_favorite_artists(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    artists = (
+        db.query(FavoriteArtist)
+        .filter(FavoriteArtist.user_id == current_user.id)
+        .order_by(FavoriteArtist.created_at.desc())
+        .all()
+    )
+
+    return {"count": len(artists), "artists": [artist_to_dict(artist) for artist in artists]}
+
+
+@app.post("/api/artists/favorites")
+def follow_artist(
+    artist: ArtistIn,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    name = artist.artistName.strip()
+
+    if not name:
+        raise HTTPException(status_code=400, detail="Artist name is required")
+
+    existing = (
+        db.query(FavoriteArtist)
+        .filter(FavoriteArtist.user_id == current_user.id, FavoriteArtist.artist_name == name)
+        .first()
+    )
+
+    if existing:
+        return artist_to_dict(existing)
+
+    favorite = FavoriteArtist(
+        user_id=current_user.id,
+        artist_name=name,
+        artwork_url=artist.artworkUrl100,
+        genre=artist.primaryGenreName,
+    )
+
+    db.add(favorite)
+    db.commit()
+    db.refresh(favorite)
+
+    return artist_to_dict(favorite)
+
+
+@app.delete("/api/artists/favorites/{artist_name}")
+def unfollow_artist(
+    artist_name: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    artist = (
+        db.query(FavoriteArtist)
+        .filter(FavoriteArtist.user_id == current_user.id, FavoriteArtist.artist_name == artist_name)
+        .first()
+    )
+
+    if not artist:
+        raise HTTPException(status_code=404, detail="Artist not found")
+
+    db.delete(artist)
+    db.commit()
+
+    return {"message": "Artist removed from favorites"}
+
+
+@app.get("/api/artists/{artist_name}/songs")
+async def artist_songs(
+    artist_name: str,
+    limit: int = Query(default=24, ge=1, le=50),
+):
+    songs = await fetch_audius_search(artist_name, limit)
+    return {"artistName": artist_name, "count": len(songs), "songs": songs}
+
+
+@app.get("/api/podcasts/search")
+async def search_podcasts(
+    term: str = Query(default="technology", min_length=1),
+    limit: int = Query(default=24, ge=1, le=50),
+):
+    podcasts = await fetch_podcasts(term, limit)
+    return {"term": term, "count": len(podcasts), "podcasts": podcasts}
+
+
+@app.get("/api/podcasts/discover")
+async def discover_podcasts():
+    terms = ["technology", "music interviews", "startup", "fitness", "storytelling"]
+    all_podcasts = []
+
+    for term in terms:
+        all_podcasts.extend(await fetch_podcasts(term, 6))
+
+    unique = {}
+    for podcast in all_podcasts:
+        unique[podcast["podcastId"]] = podcast
+
+    podcasts = list(unique.values())[:30]
+
+    return {"count": len(podcasts), "podcasts": podcasts}
+
+
+@app.get("/api/podcasts/episodes")
+async def podcast_episodes(
+    feed_url: str = Query(..., min_length=1),
+    limit: int = Query(default=12, ge=1, le=30),
+):
+    episodes = await fetch_podcast_episodes_from_feed(feed_url, limit)
+    return {"count": len(episodes), "episodes": episodes}
+
+
+@app.get("/api/podcasts/favorites")
+def get_favorite_podcasts(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    podcasts = (
+        db.query(FavoritePodcast)
+        .filter(FavoritePodcast.user_id == current_user.id)
+        .order_by(FavoritePodcast.created_at.desc())
+        .all()
+    )
+
+    return {"count": len(podcasts), "podcasts": [podcast_to_dict(podcast) for podcast in podcasts]}
+
+
+@app.post("/api/podcasts/favorites")
+def save_favorite_podcast(
+    podcast: PodcastIn,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    existing = (
+        db.query(FavoritePodcast)
+        .filter(FavoritePodcast.user_id == current_user.id, FavoritePodcast.podcast_id == podcast.podcastId)
+        .first()
+    )
+
+    if existing:
+        return podcast_to_dict(existing)
+
+    favorite = FavoritePodcast(
+        user_id=current_user.id,
+        podcast_id=podcast.podcastId,
+        title=podcast.title,
+        publisher=podcast.publisher,
+        artwork_url=podcast.artworkUrl100,
+        feed_url=podcast.feedUrl,
+        genre=podcast.genre,
+        collection_view_url=podcast.collectionViewUrl,
+        track_count=podcast.trackCount,
+    )
+
+    db.add(favorite)
+    db.commit()
+    db.refresh(favorite)
+
+    return podcast_to_dict(favorite)
+
+
+@app.delete("/api/podcasts/favorites/{podcast_id}")
+def remove_favorite_podcast(
+    podcast_id: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    podcast = (
+        db.query(FavoritePodcast)
+        .filter(FavoritePodcast.user_id == current_user.id, FavoritePodcast.podcast_id == podcast_id)
+        .first()
+    )
+
+    if not podcast:
+        raise HTTPException(status_code=404, detail="Podcast not found")
+
+    db.delete(podcast)
+    db.commit()
+
+    return {"message": "Podcast removed from favorites"}

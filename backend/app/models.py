@@ -16,6 +16,8 @@ class User(Base):
     favorites = relationship("FavoriteSong", back_populates="user", cascade="all, delete-orphan")
     history = relationship("ListeningHistory", back_populates="user", cascade="all, delete-orphan")
     playlists = relationship("Playlist", back_populates="user", cascade="all, delete-orphan")
+    artists = relationship("FavoriteArtist", back_populates="user", cascade="all, delete-orphan")
+    podcasts = relationship("FavoritePodcast", back_populates="user", cascade="all, delete-orphan")
 
 
 class FavoriteSong(Base):
@@ -102,4 +104,47 @@ class PlaylistSong(Base):
 
     __table_args__ = (
         UniqueConstraint("playlist_id", "track_id", name="unique_playlist_track"),
+    )
+
+
+
+class FavoriteArtist(Base):
+    __tablename__ = "favorite_artists"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+
+    artist_name = Column(String(255), nullable=False)
+    artwork_url = Column(String(500), nullable=True)
+    genre = Column(String(120), nullable=True)
+    source = Column(String(80), default="Audius")
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    user = relationship("User", back_populates="artists")
+
+    __table_args__ = (
+        UniqueConstraint("user_id", "artist_name", name="unique_user_artist"),
+    )
+
+
+class FavoritePodcast(Base):
+    __tablename__ = "favorite_podcasts"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+
+    podcast_id = Column(String(120), nullable=False)
+    title = Column(String(255), nullable=False)
+    publisher = Column(String(255), nullable=True)
+    artwork_url = Column(String(500), nullable=True)
+    feed_url = Column(String(800), nullable=True)
+    genre = Column(String(255), nullable=True)
+    collection_view_url = Column(String(800), nullable=True)
+    track_count = Column(Integer, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    user = relationship("User", back_populates="podcasts")
+
+    __table_args__ = (
+        UniqueConstraint("user_id", "podcast_id", name="unique_user_podcast"),
     )

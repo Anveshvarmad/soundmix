@@ -43,3 +43,20 @@ class PlaylistCreate(BaseModel):
 class PlaylistUpdate(BaseModel):
     name: Optional[str] = None
     description: Optional[str] = None
+
+
+class ArtistIn(BaseModel):
+    artistName: str
+    artworkUrl100: Optional[str] = None
+    primaryGenreName: Optional[str] = None
+
+
+class PodcastIn(BaseModel):
+    podcastId: str
+    title: str
+    publisher: Optional[str] = None
+    artworkUrl100: Optional[str] = None
+    feedUrl: Optional[str] = None
+    genre: Optional[str] = None
+    collectionViewUrl: Optional[str] = None
+    trackCount: Optional[int] = None
