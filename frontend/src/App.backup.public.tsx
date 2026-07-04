@@ -4,8 +4,6 @@ import {
   Camera,
   Clock,
   Compass,
-  Copy,
-  ExternalLink,
   Headphones,
   Heart,
   History,
@@ -26,7 +24,6 @@ import {
   Radio,
   Rss,
   Search,
-  Share2,
   Sparkles,
   Star,
   Trash2,
@@ -61,8 +58,6 @@ type Playlist = {
   songCount: number;
   createdAt?: string;
   songs?: Song[];
-  ownerId?: number;
-  ownerName?: string;
 };
 
 type Artist = {
@@ -83,22 +78,6 @@ type Podcast = {
   trackCount?: number;
 };
 
-
-
-type PublicProfile = {
-  id: number;
-  name: string;
-  joinedAt?: string;
-  stats: {
-    likedSongs: number;
-    playedTracks: number;
-    playlists: number;
-    artists: number;
-    podcasts: number;
-  };
-  playlists: Playlist[];
-};
-
 type PodcastEpisode = {
   episodeId: string;
   title: string;
@@ -117,9 +96,7 @@ type View =
   | "library"
   | "history"
   | "playlists"
-  | "profile"
-  | "shared"
-  | "publicProfile";
+  | "profile";
 
 const API_URL = import.meta.env.VITE_API_URL || "http://localhost:8000";
 
@@ -152,9 +129,6 @@ export default function App() {
   const [history, setHistory] = useState<Song[]>([]);
   const [playlists, setPlaylists] = useState<Playlist[]>([]);
   const [selectedPlaylist, setSelectedPlaylist] = useState<Playlist | null>(null);
-  const [sharedPlaylist, setSharedPlaylist] = useState<Playlist | null>(null);
-  const [sharedProfile, setSharedProfile] = useState<PublicProfile | null>(null);
-  const [shareMessage, setShareMessage] = useState("");
 
   const [favoriteArtists, setFavoriteArtists] = useState<Artist[]>([]);
   const [artistSongs, setArtistSongs] = useState<Song[]>([]);
@@ -228,54 +202,6 @@ export default function App() {
 
   const visibleSongs =
     activeView === "library" ? favorites : activeView === "history" ? history : songs;
-
-  async function copyToClipboard(value: string) {
-    try {
-      await navigator.clipboard.writeText(value);
-      setShareMessage("Copied share link.");
-    } catch {
-      window.prompt("Copy this link:", value);
-    }
-  }
-
-  async function sharePlaylist(playlist: Playlist) {
-    const url = `${window.location.origin}${window.location.pathname}?playlist=${playlist.id}`;
-    await copyToClipboard(url);
-  }
-
-  async function shareProfile() {
-    if (!user) {
-      setActiveView("profile");
-      return;
-    }
-
-    const url = `${window.location.origin}${window.location.pathname}?profile=${user.id}`;
-    await copyToClipboard(url);
-  }
-
-  async function loadSharedPlaylist(playlistId: string) {
-    setLoading(true);
-
-    try {
-      const res = await axios.get(`${API_URL}/api/public/playlists/${playlistId}`);
-      setSharedPlaylist(res.data);
-      setActiveView("shared");
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  async function loadSharedProfile(userId: string) {
-    setLoading(true);
-
-    try {
-      const res = await axios.get(`${API_URL}/api/public/users/${userId}/profile`);
-      setSharedProfile(res.data);
-      setActiveView("publicProfile");
-    } finally {
-      setLoading(false);
-    }
-  }
 
   async function generateSmartMix(e?: FormEvent) {
     if (e) {
@@ -938,18 +864,7 @@ export default function App() {
   }
 
   useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
-    const playlistId = params.get("playlist");
-    const profileId = params.get("profile");
-
-    if (playlistId) {
-      loadSharedPlaylist(playlistId);
-    } else if (profileId) {
-      loadSharedProfile(profileId);
-    } else {
-      fetchDiscover();
-    }
-
+    fetchDiscover();
     if (token) loadMe(token);
   }, []);
 
@@ -1238,25 +1153,6 @@ export default function App() {
             />
           )}
 
-          {activeView === "shared" && (
-            <SharedPlaylistPage
-              playlist={sharedPlaylist}
-              loading={loading}
-              onPlay={(song: Song, index: number) =>
-                playSong(song, sharedPlaylist?.songs || [], index)
-              }
-              onOpenOwner={(ownerId: number) => loadSharedProfile(String(ownerId))}
-            />
-          )}
-
-          {activeView === "publicProfile" && (
-            <PublicProfilePage
-              profile={sharedProfile}
-              loading={loading}
-              onOpenPlaylist={(playlistId: number) => loadSharedPlaylist(String(playlistId))}
-            />
-          )}
-
           {activeView === "playlists" && (
             <PlaylistsPage
               user={user}
@@ -1273,7 +1169,6 @@ export default function App() {
               onRemoveSong={removeFromPlaylist}
               onPlay={playSong}
               onProfile={() => setActiveView("profile")}
-              onSharePlaylist={sharePlaylist}
             />
           )}
 
@@ -1296,8 +1191,6 @@ export default function App() {
               setAuthPassword={setAuthPassword}
               handleAuthSubmit={handleAuthSubmit}
               logout={logout}
-              onShareProfile={shareProfile}
-              shareMessage={shareMessage}
             />
           )}
         </div>
@@ -1456,8 +1349,6 @@ function titleForView(view: View) {
     history: "Listening History",
     playlists: "Playlists",
     profile: "Profile",
-    shared: "Shared Playlist",
-    publicProfile: "Public Profile",
   };
 
   return titles[view];
@@ -2090,188 +1981,6 @@ function PodcastsPage({
   );
 }
 
-
-
-function SharedPlaylistPage({
-  playlist,
-  loading,
-  onPlay,
-  onOpenOwner,
-}: {
-  playlist: Playlist | null;
-  loading: boolean;
-  onPlay: (song: Song, index: number) => void;
-  onOpenOwner: (ownerId: number) => void;
-}) {
-  if (loading) {
-    return (
-      <div className="rounded-[2rem] border border-white/10 bg-white/5 p-12 text-center text-white/60">
-        Loading shared playlist...
-      </div>
-    );
-  }
-
-  if (!playlist) {
-    return (
-      <div className="rounded-[2rem] border border-white/10 bg-white/5 p-12 text-center text-white/60">
-        Shared playlist not found.
-      </div>
-    );
-  }
-
-  return (
-    <section>
-      <div className="rounded-[2rem] border border-white/10 bg-gradient-to-br from-purple-700/40 via-fuchsia-500/20 to-cyan-400/10 p-8">
-        <div className="mb-5 inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/10 px-4 py-2 text-sm text-purple-100">
-          <Share2 size={16} />
-          Shared SoundMix playlist
-        </div>
-
-        <h1 className="text-5xl font-black md:text-7xl">{playlist.name}</h1>
-
-        <p className="mt-4 max-w-2xl text-white/60">
-          {playlist.description || "A shared playlist from SoundMix."}
-        </p>
-
-        <div className="mt-6 flex flex-wrap items-center gap-3">
-          {playlist.ownerId && (
-            <button
-              onClick={() => onOpenOwner(playlist.ownerId!)}
-              className="rounded-2xl border border-white/10 bg-white/10 px-5 py-3 font-bold hover:bg-white/20"
-            >
-              By {playlist.ownerName || "SoundMix User"}
-            </button>
-          )}
-
-          <span className="rounded-2xl bg-white px-5 py-3 font-black text-black">
-            {playlist.songs?.length || 0} songs
-          </span>
-        </div>
-      </div>
-
-      <div className="mt-8 space-y-3">
-        {!playlist.songs || playlist.songs.length === 0 ? (
-          <div className="rounded-[2rem] border border-white/10 bg-white/5 p-12 text-center text-white/60">
-            This shared playlist is empty.
-          </div>
-        ) : (
-          playlist.songs.map((song, index) => (
-            <motion.div
-              key={`${song.trackId}-${index}`}
-              whileHover={{ x: 6 }}
-              className="flex items-center gap-4 rounded-2xl border border-white/10 bg-white/5 p-4"
-            >
-              <div className="w-8 text-center text-sm text-white/40">{index + 1}</div>
-
-              <img
-                src={song.artworkUrl100 || ""}
-                alt={song.trackName}
-                className="h-16 w-16 rounded-xl object-cover"
-              />
-
-              <div className="min-w-0 flex-1">
-                <h3 className="truncate font-black">{song.trackName}</h3>
-                <p className="truncate text-sm text-white/50">{song.artistName}</p>
-              </div>
-
-              <button
-                onClick={() => onPlay(song, index)}
-                className="rounded-xl bg-purple-500 p-3 hover:bg-purple-400"
-              >
-                <Play size={18} fill="white" />
-              </button>
-            </motion.div>
-          ))
-        )}
-      </div>
-    </section>
-  );
-}
-
-function PublicProfilePage({
-  profile,
-  loading,
-  onOpenPlaylist,
-}: {
-  profile: PublicProfile | null;
-  loading: boolean;
-  onOpenPlaylist: (playlistId: number) => void;
-}) {
-  if (loading) {
-    return (
-      <div className="rounded-[2rem] border border-white/10 bg-white/5 p-12 text-center text-white/60">
-        Loading public profile...
-      </div>
-    );
-  }
-
-  if (!profile) {
-    return (
-      <div className="rounded-[2rem] border border-white/10 bg-white/5 p-12 text-center text-white/60">
-        Public profile not found.
-      </div>
-    );
-  }
-
-  return (
-    <section>
-      <div className="rounded-[2rem] border border-white/10 bg-gradient-to-br from-cyan-500/25 via-purple-600/25 to-pink-500/10 p-8">
-        <div className="mb-6 flex h-24 w-24 items-center justify-center rounded-[2rem] bg-purple-500 text-4xl font-black">
-          {profile.name.charAt(0).toUpperCase()}
-        </div>
-
-        <h1 className="text-5xl font-black md:text-7xl">{profile.name}</h1>
-
-        <p className="mt-4 text-white/55">Public SoundMix profile</p>
-
-        <div className="mt-8 grid gap-4 md:grid-cols-5">
-          <StatCard label="Liked Songs" value={profile.stats.likedSongs} icon={<Heart size={20} />} />
-          <StatCard label="Played" value={profile.stats.playedTracks} icon={<History size={20} />} />
-          <StatCard label="Playlists" value={profile.stats.playlists} icon={<ListMusic size={20} />} />
-          <StatCard label="Artists" value={profile.stats.artists} icon={<Mic2 size={20} />} />
-          <StatCard label="Podcasts" value={profile.stats.podcasts} icon={<Rss size={20} />} />
-        </div>
-      </div>
-
-      <section className="mt-10">
-        <h2 className="mb-5 text-3xl font-black">Public Playlists</h2>
-
-        {profile.playlists.length === 0 ? (
-          <div className="rounded-[2rem] border border-white/10 bg-white/5 p-12 text-center text-white/60">
-            No playlists yet.
-          </div>
-        ) : (
-          <div className="grid gap-5 md:grid-cols-3">
-            {profile.playlists.map((playlist) => (
-              <motion.button
-                key={playlist.id}
-                whileHover={{ y: -6 }}
-                onClick={() => onOpenPlaylist(playlist.id)}
-                className="rounded-[2rem] border border-white/10 bg-white/5 p-6 text-left hover:bg-white/10"
-              >
-                <div className="mb-5 flex h-16 w-16 items-center justify-center rounded-2xl bg-purple-500/20 text-purple-100">
-                  <ListMusic size={28} />
-                </div>
-
-                <h3 className="text-2xl font-black">{playlist.name}</h3>
-                <p className="mt-2 line-clamp-2 text-sm text-white/50">
-                  {playlist.description || "SoundMix playlist"}
-                </p>
-
-                <div className="mt-5 inline-flex items-center gap-2 text-sm text-purple-200">
-                  <ExternalLink size={15} />
-                  Open playlist
-                </div>
-              </motion.button>
-            ))}
-          </div>
-        )}
-      </section>
-    </section>
-  );
-}
-
-
 function PlaylistsPage(props: any) {
   return (
     <section className="grid gap-6 xl:grid-cols-[0.8fr_1.2fr]">
@@ -2341,23 +2050,13 @@ function PlaylistsPage(props: any) {
                 <h2 className="text-4xl font-black">{props.selectedPlaylist.name}</h2>
                 <p className="mt-2 text-white/50">{props.selectedPlaylist.description || "No description"}</p>
               </div>
-              <div className="flex flex-wrap gap-3">
-                <button
-                  onClick={() => props.onSharePlaylist(props.selectedPlaylist)}
-                  className="flex items-center gap-2 rounded-2xl border border-purple-400/30 bg-purple-500/10 px-4 py-3 text-sm font-bold text-purple-100 hover:bg-purple-500/20"
-                >
-                  <Share2 size={16} />
-                  Share
-                </button>
-
-                <button
-                  onClick={() => props.onDeletePlaylist(props.selectedPlaylist.id)}
-                  className="flex items-center gap-2 rounded-2xl border border-red-400/30 bg-red-500/10 px-4 py-3 text-sm font-bold text-red-200"
-                >
-                  <Trash2 size={16} />
-                  Delete
-                </button>
-              </div>
+              <button
+                onClick={() => props.onDeletePlaylist(props.selectedPlaylist.id)}
+                className="flex items-center gap-2 rounded-2xl border border-red-400/30 bg-red-500/10 px-4 py-3 text-sm font-bold text-red-200"
+              >
+                <Trash2 size={16} />
+                Delete
+              </button>
             </div>
 
             {!props.selectedPlaylist.songs || props.selectedPlaylist.songs.length === 0 ? (
@@ -2418,21 +2117,7 @@ function ProfilePage(props: any) {
               <StatCard label="Playlists" value={props.playlists} icon={<ListMusic size={20} />} />
             </div>
 
-            <button
-              onClick={props.onShareProfile}
-              className="mt-8 flex w-full items-center justify-center gap-2 rounded-2xl border border-purple-400/30 bg-purple-500/10 px-5 py-4 font-black text-purple-100 hover:bg-purple-500/20"
-            >
-              <Copy size={18} />
-              Share Public Profile
-            </button>
-
-            {props.shareMessage && (
-              <p className="mt-3 rounded-2xl border border-white/10 bg-white/10 px-4 py-3 text-sm text-purple-100">
-                {props.shareMessage}
-              </p>
-            )}
-
-            <button onClick={props.logout} className="mt-4 w-full rounded-2xl bg-white px-5 py-4 font-black text-black">
+            <button onClick={props.logout} className="mt-8 w-full rounded-2xl bg-white px-5 py-4 font-black text-black">
               Logout
             </button>
           </>
