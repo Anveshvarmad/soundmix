@@ -1,0 +1,43 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: soundmix-postgres
+    environment:
+      POSTGRES_USER: soundmix
+      POSTGRES_PASSWORD: soundmix
+      POSTGRES_DB: soundmix
+    ports:
+      - "5432:5432"
+    volumes:
+      - soundmix-postgres-data:/var/lib/postgresql/data
+
+  backend:
+    build:
+      context: ./backend
+    container_name: soundmix-backend
+    environment:
+      DATABASE_URL: postgresql+psycopg2://soundmix:soundmix@postgres:5432/soundmix
+      CORS_ORIGINS: http://localhost:5173
+    ports:
+      - "8000:8000"
+    depends_on:
+      - postgres
+    volumes:
+      - ./backend:/app
+
+  frontend:
+    build:
+      context: ./frontend
+    container_name: soundmix-frontend
+    environment:
+      VITE_API_URL: http://localhost:8000
+    ports:
+      - "5173:5173"
+    depends_on:
+      - backend
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+
+volumes:
+  soundmix-postgres-data:
