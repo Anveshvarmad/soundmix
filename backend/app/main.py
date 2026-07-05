@@ -524,6 +524,16 @@ def make_unique_playlist_name(db: Session, user_id: int, base_name: str) -> str:
 
     return f"{name} {counter}"
 
+
+@app.get("/")
+def root():
+    return {
+        "message": "SoundMix API is running",
+        "health": "/health",
+        "docs": "/docs"
+    }
+
+
 @app.get("/health")
 def health():
     return {"status": "ok", "service": "soundmix-api", "musicProvider": "Audius"}
